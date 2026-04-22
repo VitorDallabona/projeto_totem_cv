@@ -1,0 +1,16 @@
+# ambiente virtual
+venv/
+env/
+
+# cache do python
+__pycache__/
+
+# .env
+.env
+
+# banco de dados
+db.sqlite3
+
+
+# ADICIONE OUTRAS COISAS AQUI QUE DESEJA IGNORAR AO FAZER UPLOAD PARA O GITHUB
+# ex.: fotos, dados etc

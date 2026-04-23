@@ -1,0 +1,6 @@
+Django
+djangorestframework
+setuptools<81
+cmake
+opencv-python
+face-recognition

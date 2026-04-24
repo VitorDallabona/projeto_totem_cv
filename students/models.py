@@ -47,8 +47,8 @@ class Attendance(models.Model):
         is_valid: resultado do liveness
     """
     
-    student = models.ForeignKey(Student, on_delete=models.CASCODE)
-    classroom = models.ForeignKey(Classroom, on_delete=models.CASCODE)
+    student = models.ForeignKey(Student, on_delete=models.CASCADE)
+    classroom = models.ForeignKey(Classroom, on_delete=models.CASCADE)
     timestamp = models.DateTimeField(auto_now_add=True)
     liveness_score = models.FloatField()
     is_valid = models.BooleanField(default=False)

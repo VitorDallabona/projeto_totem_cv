@@ -1,0 +1,62 @@
+{% extends 'core/base.html' %}
+{% block content %}
+<div class="row">
+    <div class="col-md-4">
+        <div class="card shadow-sm mb-4">
+            <div class="card-header bg-primary text-white">
+                <h5 class="card-title mb-0">Turmas em Andamento</h5>
+            </div>
+            <ul class="list-group list-group-flush">
+                {% for classroom in active_classes %}
+                    <li class="list-group-item">
+                        <strong>{{ classroom.subject }}</strong><br>
+                        <small class="text-muted">Prof. {{ classroom.teacher }}</small>
+                    </li>
+                {% empty %}
+                    <li class="list-group-item text-muted">Nenhuma turma ativa no momento. Inicie uma chamada no painel admin.</li>
+                {% endfor %}
+            </ul>
+        </div>
+    </div>
+
+    <div class="col-md-8">
+        <div class="card shadow-sm">
+            <div class="card-header bg-success text-white">
+                <h5 class="card-title mb-0">Monitor de Presenças em Tempo Real</h5>
+            </div>
+            <div class="card-body p-0">
+                <table class="table table-striped mb-0">
+                    <thead>
+                        <tr>
+                            <th>Horário</th>
+                            <th>Aluno</th>
+                            <th>Matrícula</th>
+                            <th>Status (Liveness)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for attendance in recent_attendances %}
+                        <tr>
+                            <td>{{ attendance.timestamp|time:"H:i:s" }}</td>
+                            <td>{{ attendance.student.name }}</td>
+                            <td>{{ attendance.student.registration_id }}</td>
+                            <td>
+                                {% if attendance.is_valid %}
+                                    <span class="badge bg-success">Validado</span>
+                                {% else %}
+                                    <span class="badge bg-danger">Suspeito ({{ attendance.liveness_score }})</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="4" class="text-center text-muted py-3">Aguardando capturas do totem...</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,54 @@
+{% extends 'core/base.html' %}
+
+{% block content %}
+<div class="row justify-content-center mt-4">
+    <div class="col-md-10">
+        <div class="card shadow-sm">
+            <div class="card-header bg-info text-white">
+                <h5 class="mb-0">Meu Histórico de Presenças</h5>
+            </div>
+            <div class="card-body">
+                <div class="mb-4">
+                    <h6 class="mb-1"><strong>Aluno:</strong> {{ user.get_full_name|default:user.username }}</h6>
+                    <span class="text-muted"><strong>Matrícula:</strong> {{ user.student_profile.registration_id }}</span>
+                </div>
+
+                <div class="table-responsive">
+                    <table class="table table-hover table-bordered">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Data</th>
+                                <th>Horário</th>
+                                <th>Turma</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for att in attendances %}
+                            <tr>
+                                <td>{{ att.timestamp|date:"d/m/Y" }}</td>
+                                <td>{{ att.timestamp|time:"H:i:s" }}</td>
+                                <td>{{ att.classroom.subject }}</td>
+                                <td>
+                                    {% if att.is_valid %}
+                                        <span class="badge bg-success">Presença Confirmada</span>
+                                    {% else %}
+                                        <span class="badge bg-warning text-dark">Análise Pendente ({{ att.liveness_score }})</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="4" class="text-center text-muted py-4">
+                                    Nenhum registro de presença encontrado até o momento.
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

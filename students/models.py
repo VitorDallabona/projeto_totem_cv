@@ -1,4 +1,13 @@
 from django.db import models
+from django.contrib.auth.models import User
+
+class Profile(models.Model):
+    user = models.OneToOneField(User, on_delete=models.CASCADE)
+    is_teacher = models.BooleanField(default=False)
+    
+    def __cl__(self):
+        return self.user.username
+
 
 class Student(models.Model):
     """ 
@@ -10,15 +19,15 @@ class Student(models.Model):
         - created_at: data de cadastro do aluno
     """
     
-    name = models.CharField(max_length=200)
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='student_profile')
     registration_id = models.CharField(max_length=20, unique=True)
     face_encoding = models.JSONField()
     created_at = models.DateTimeField(auto_now_add=True)
+    profile_photo = models.ImageField(upload_to='faces/', null=True, blank=True)
     
     def __str__(self):
-        return f"{self.name} ({self.registration_id})"
+        return self.user.get_full_name() or self.user.username
     
-
 class Classroom(models.Model):
     """
         Guarda as informacoes sobre a disciplina

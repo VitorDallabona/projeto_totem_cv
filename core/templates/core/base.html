@@ -10,7 +10,25 @@
     <nav class="navbar navbar-dark bg-dark mb-4">
         <div class="container">
             <a class="navbar-brand" href="/">Sistema de Frequência</a>
-            <a href="/admin/" class="btn btn-outline-light btn-sm">Painel Admin</a>
+            
+            <div class="d-flex align-items-center">
+                {% if user.is_authenticated %}
+                    <span class="text-light me-3">Olá, {{ user.first_name|default:user.username }}!</span>
+                    
+                    {% if user.profile.is_teacher %}
+                        <a href="/admin/" class="btn btn-outline-light btn-sm me-2">Painel Admin</a>
+                    {% else %}
+                        <a href="{% url 'student_absences' %}" class="btn btn-info btn-sm me-2">Minhas Faltas</a>
+                    {% endif %}
+                    
+                    <form action="{% url 'logout' %}" method="post" class="d-inline">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-danger btn-sm">Sair</button>
+                    </form>
+                {% else %}
+                    <a href="{% url 'login' %}" class="btn btn-outline-light btn-sm">Entrar</a>
+                {% endif %}
+            </div>
         </div>
     </nav>
 

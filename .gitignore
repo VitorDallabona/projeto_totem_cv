@@ -11,6 +11,9 @@ __pycache__/
 # banco de dados
 db.sqlite3
 
+# arquivos de upload de usuários
+media/
+
 
 # ADICIONE OUTRAS COISAS AQUI QUE DESEJA IGNORAR AO FAZER UPLOAD PARA O GITHUB
 # ex.: fotos, dados etc

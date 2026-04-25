@@ -1,0 +1,41 @@
+{% extends 'core/base.html' %}
+
+{% block content %}
+<div class="row justify-content-center mt-5">
+    <div class="col-md-4">
+        <div class="card shadow-sm">
+            <div class="card-header bg-dark text-white text-center">
+                <h5 class="mb-0">Acesso ao Sistema</h5>
+            </div>
+            <div class="card-body">
+                <form method="post">
+                    {% csrf_token %}
+                    
+                    {% if form.errors %}
+                        <div class="alert alert-danger p-2" role="alert">
+                            <small>Usuário ou senha incorretos.</small>
+                        </div>
+                    {% endif %}
+
+                    <div class="mb-3">
+                        <label class="form-label">Usuário (Matrícula):</label>
+                        <input type="text" name="username" class="form-control" required>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label">Senha:</label>
+                        <input type="password" name="password" class="form-control" required>
+                    </div>
+                    
+                    <div class="d-grid gap-2">
+                        <button type="submit" class="btn btn-primary">Entrar</button>
+                    </div>
+                </form>
+            </div>
+            <div class="card-footer text-center">
+                <small class="text-muted">Novo aluno? <a href="/students/register/">Cadastre-se aqui</a></small>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

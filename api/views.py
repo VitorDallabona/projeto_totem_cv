@@ -17,6 +17,13 @@ def mock_check_presence(request):
             if not active_class:
                 return JsonResponse({'status': 'erro', 'mensagem': 'Nenhuma aula ativa no momento.'})
             
+            #verifica se o aluno está matriculado na turma
+            if student not in active_class.enrolled_students.all():
+                return JsonResponse({
+                    'status': 'erro', 
+                    'mensagem': f'Acesso Negado: {student.user.first_name} não está matriculado nesta disciplina.'
+                })
+            
             Attendance.objects.create(
                 student=student, 
                 classroom=active_class,

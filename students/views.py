@@ -1,8 +1,13 @@
 from django.shortcuts import render, redirect
 from django.contrib.auth.models import User
+from django.contrib.auth.decorators import login_required
 from .forms import StudentRegistrationForm
 import face_recognition
 import json
+from django.shortcuts import get_object_or_404
+from PIL import Image, ImageOps
+from .models import Student
+import numpy as np
 
 def register_student(request):
     if request.method == 'POST':
@@ -51,3 +56,40 @@ def register_student(request):
         form = StudentRegistrationForm()
     return render(request, 'students/register.html', {'form': form})
 
+
+
+@login_required
+def update_student_photo(request, student_id):
+    # Garante que apenas professores acessem
+    if not request.user.profile.is_teacher:
+        return redirect('dashboard')
+        
+    student = get_object_or_404(Student, id=student_id)
+    
+    if request.method == 'POST' and request.FILES.get('new_photo'):
+        try:
+            photo = request.FILES['new_photo']
+            img = Image.open(photo)
+            img = ImageOps.exif_transpose(img)
+            img = img.convert('RGB')
+            img_array = np.array(img)
+            
+            encodings = face_recognition.face_encodings(img_array)
+            
+            if encodings:
+                student.profile_photo = photo
+                student.face_encoding = encodings[0].tolist()
+                student.save()
+                return redirect('dashboard')
+            else:
+                return render(request, 'students/update_photo.html', {
+                    'student': student, 
+                    'error': 'Nenhum rosto detectado na nova foto.'
+                })
+        except Exception as e:
+            return render(request, 'students/update_photo.html', {
+                'student': student, 
+                'error': f'Erro ao processar: {e}'
+            })
+
+    return render(request, 'students/update_photo.html', {'student': student})

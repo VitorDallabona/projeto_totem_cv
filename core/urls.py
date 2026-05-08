@@ -3,6 +3,7 @@ from . import views
 
 urlpatterns = [
     path('', views.teacher_dashboard, name='dashboard'),
-    path('dados-recentes/', views.recent_attendances_api, name='recent_attendances_api')
+    path('dados-recentes/', views.recent_attendances_api, name='recent_attendances_api'),
+    path('exportar-chamada/<int:class_id>/', views.export_attendance_csv, name='export_csv'),
 ]
 

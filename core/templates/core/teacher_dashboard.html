@@ -1,29 +1,67 @@
 {% extends 'core/base.html' %}
 {% load static %}
+
 {% block content %}
-<div class="row">
-    <div class="col-md-4">
-        <div class="card shadow-sm mb-4">
-            <div class="card-header bg-primary text-white">
-                <h5 class="card-title mb-0">Turmas em Andamento</h5>
-            </div>
-            <ul class="list-group list-group-flush">
-                {% for classroom in active_classes %}
-                    <li class="list-group-item">
-                        <strong>{{ classroom.subject }}</strong><br>
-                        <small class="text-muted">Prof. {{ classroom.teacher }}</small>
-                    </li>
-                {% empty %}
-                    <li class="list-group-item text-muted">Nenhuma turma ativa no momento. Inicie uma chamada no painel admin.</li>
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2>Painel de Controle</h2>
+    <a href="{% url 'register' %}" class="btn btn-primary">+ Cadastrar Novo Aluno</a>
+</div>
+
+<div class="row mb-4">
+    <div class="col-md-8">
+        <form method="get" class="d-flex gap-2">
+            <select name="class_id" class="form-select border-primary text-primary fw-bold" onchange="this.form.submit()">
+                <option value="">Selecione uma Turma</option>
+                {% for c in classrooms %}
+                    <option value="{{ c.id }}" {% if c == selected_class %}selected{% endif %}>
+                        {{ c.subject }} - {{ c.teacher }}
+                    </option>
                 {% endfor %}
-            </ul>
+            </select>
+        </form>
+    </div>
+    <div class="col-md-4 text-end">
+        {% if selected_class %}
+        <a href="{% url 'export_csv' selected_class.id %}" class="btn btn-outline-success">
+            Exportar Chamada (.csv)
+        </a>
+        {% endif %}
+    </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-md-4">
+        <div class="card bg-primary text-white border-0 shadow-sm">
+            <div class="card-body">
+                <h6 class="card-title opacity-75">Total Matriculados</h6>
+                <h2 class="mb-0">{{ stats.total }}</h2>
+            </div>
         </div>
     </div>
+    <div class="col-md-4">
+        <div class="card bg-success text-white border-0 shadow-sm">
+            <div class="card-body">
+                <h6 class="card-title opacity-75">Presentes Agora</h6>
+                <h2 class="mb-0">{{ stats.presentes }}</h2>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card bg-danger text-white border-0 shadow-sm">
+            <div class="card-body">
+                <h6 class="card-title opacity-75">Ausentes</h6>
+                <h2 class="mb-0">{{ stats.faltando }}</h2>
+            </div>
+        </div>
+    </div>
+</div>
 
+<div class="row">
     <div class="col-md-8">
-        <div class="card shadow-sm">
-            <div class="card-header bg-success text-white">
-                <h5 class="card-title mb-0">Monitor de Presenças em Tempo Real</h5>
+        <div class="card shadow-sm mb-4">
+            <div class="card-header bg-success text-white d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">Monitor de Presenças</h5>
+                <button onclick="limparTabela()" class="btn btn-sm btn-danger">Limpar Tudo</button>
             </div>
             <div class="card-body p-0">
                 <table class="table table-striped mb-0">
@@ -32,30 +70,40 @@
                             <th>Horário</th>
                             <th>Aluno</th>
                             <th>Matrícula</th>
-                            <th>Status (Liveness)</th>
+                            <th>Status</th>
                         </tr>
                     </thead>
                     <tbody>
-                        {% for attendance in recent_attendances %}
-                        <tr>
-                            <td>{{ attendance.timestamp|time:"H:i:s" }}</td>
-                            <td>{{ attendance.student.name }}</td>
-                            <td>{{ attendance.student.registration_id }}</td>
-                            <td>
-                                {% if attendance.is_valid %}
-                                    <span class="badge bg-success">Validado</span>
-                                {% else %}
-                                    <span class="badge bg-danger">Suspeito ({{ attendance.liveness_score }})</span>
-                                {% endif %}
-                            </td>
-                        </tr>
-                        {% empty %}
-                        <tr>
-                            <td colspan="4" class="text-center text-muted py-3">Aguardando capturas do totem...</td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
+                        </tbody>
                 </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-4">
+        <div class="card shadow-sm">
+            <div class="card-header bg-dark text-white">
+                <h5 class="mb-0">Alunos Registrados</h5>
+            </div>
+            <div class="list-group list-group-flush" style="max-height: 500px; overflow-y: auto;">
+                {% for s in students %}
+                <div class="list-group-item">
+                    <div class="d-flex align-items-center mb-2">
+                        {% if s.profile_photo %}
+                            <img src="{{ s.profile_photo.url }}" class="rounded-circle me-3" style="width: 50px; height: 50px; object-fit: cover; border: 2px solid #ddd;">
+                        {% else %}
+                            <div class="bg-secondary rounded-circle me-3" style="width: 50px; height: 50px;"></div>
+                        {% endif %}
+                        <div>
+                            <strong class="d-block">{{ s.user.get_full_name }}</strong>
+                            <small class="text-muted">{{ s.registration_id }}</small>
+                        </div>
+                    </div>
+                    <a href="{% url 'update_student_photo' s.id %}" class="btn btn-sm btn-outline-secondary w-100">Alterar Foto / Biometria</a>
+                </div>
+                {% empty %}
+                <p class="text-center p-3 text-muted">Nenhum aluno cadastrado.</p>
+                {% endfor %}
             </div>
         </div>
     </div>

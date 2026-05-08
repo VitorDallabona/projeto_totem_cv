@@ -41,6 +41,8 @@ class Classroom(models.Model):
     teacher = models.CharField(max_length=100)
     active_now = models.BooleanField(default=False)
     
+    enrolled_students = models.ManyToManyField(Student, blank=True, related_name='my_classes')
+    
     def __str__(self):
         return self.subject
 

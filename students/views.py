@@ -8,6 +8,61 @@ from django.shortcuts import get_object_or_404
 from PIL import Image, ImageOps
 from .models import Student
 import numpy as np
+from django.shortcuts import render
+from django.http import StreamingHttpResponse
+import cv2 as cv
+from .ia import FaceRecognition
+
+# Inicia a rede neural na memória UMA VEZ
+print("Carregando Modelos de IA na GPU...")
+ia_system = FaceRecognition('media/faces')
+
+def tela_monitoramento(request):
+    """Renderiza a casca do HTML (Botões, menus, logo da empresa)"""
+    ia_system.atualizar_banco_rostos()
+    return render(request, 'monitoramento.html')
+
+def consumir_totem():
+    """
+    Conecta no Totem via rede, processa a IA e devolve para o HTML
+    """
+    
+    # --- A MÁGICA ACONTECE AQUI ---
+    # Em vez de 0, passamos o link exato do Flask do Totem
+    IP_DO_TOTEM = '192.168.1.10'
+    link_totem = f'http://{IP_DO_TOTEM}:4747/video'
+    
+    print(f"Tentando conectar no Totem: {link_totem}...")
+    camera_remota = cv.VideoCapture(link_totem)
+    
+    while True:
+        sucesso, frame = camera_remota.read()
+        
+        if not sucesso:
+            # Se a rede oscilar, podemos colocar um print ou sleep aqui
+            break
+            
+        # O frame que viajou pela rede entra na sua IA
+        # A IA processa, desenha caixas verdes, checa spoofing, etc.
+        frame_processado = ia_system.run_recognition(frame)
+        
+        # Re-encoda o frame final (já com os desenhos) para a Web
+        ret, buffer = cv.imencode('.jpg', frame_processado)
+        frame_bytes = buffer.tobytes()
+        
+        yield (
+            b'--frame\r\n'
+            b'Content-Type: image/jpeg\r\n\r\n' + 
+            frame_bytes + 
+            b'\r\n'
+        )
+
+def video_feed(request):
+    """Endpoint chamado pela tag <img> do HTML"""
+    return StreamingHttpResponse(
+        consumir_totem(),
+        content_type='multipart/x-mixed-replace; boundary=frame'
+    )
 
 def register_student(request):
     if request.method == 'POST':

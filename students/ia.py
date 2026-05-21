@@ -1,15 +1,83 @@
-import face_recognition
 import os
-import cv2 as cv
-import math
-import numpy as np
-import dlib
-from .encodes import carregar_rostos_conhecidos
-from cv2 import cuda
+import logging
 
-from .liveness import AISpoofManager 
+# Imports pesados - comentados para shells/migrations
+try:
+    import face_recognition
+    import cv2 as cv
+    import math
+    import numpy as np
+    import dlib
+    from cv2 import cuda
+    from .encodes import carregar_rostos_conhecidos
+    from .liveness import AISpoofManager
+    print(dlib.DLIB_USE_CUDA)
+except ImportError as e:
+    print(f"⚠️  Aviso: Importações pesadas indisponíveis: {e}")
+    print("   Função salvar_registro_acesso() funcionará normalmente")
 
-print(dlib.DLIB_USE_CUDA)
+from .models import Student, Attendance, Classroom
+
+# Configurar logger para debug
+logger = logging.getLogger(__name__)
+
+
+def salvar_registro_acesso(nome_aluno, direcao, liveness_score=0.0):
+    """
+    Salva um registro de acesso no banco de dados.
+    Chamado quando o sistema detecta um aluno passando pela linha virtual.
+    
+    Args:
+        nome_aluno: Nome do aluno (como está em Student.user.username ou no face_encoding)
+        direcao: "DIREITA" ou "ESQUERDA"
+        liveness_score: Score do algoritmo de liveness (padrão 0.0)
+    """
+    try:
+        # Mapear direção para Entrada/Saída
+        # DIREITA = ENTRADA (esquerda para direita)
+        # ESQUERDA = SAÍDA (direita para esquerda)
+        attendance_direction = "ENTRADA" if direcao == "DIREITA" else "SAÍDA"
+        
+        # Buscar o aluno pelo username (ajuste conforme sua lógica de naming)
+        student = Student.objects.filter(user__username=nome_aluno).first()
+        
+        if not student:
+            logger.warning(f"Aluno {nome_aluno} não encontrado no banco de dados")
+            print(f"[AVISO] {nome_aluno} não encontrado no banco")
+            return False
+        
+        # Buscar a sala de aula ativa
+        classroom = Classroom.objects.filter(active_now=True).first()
+        
+        if not classroom:
+            logger.warning("Nenhuma sala de aula marcada como ativa")
+            print(f"[AVISO] Nenhuma sala ativa para registrar {nome_aluno}")
+            return False
+        
+        # Criar o registro de presença
+        attendance = Attendance.objects.create(
+            student=student,
+            classroom=classroom,
+            liveness_score=liveness_score,
+            is_valid=True,
+            direction=attendance_direction
+        )
+        
+        logger.info(
+            f"Acesso registrado: {student.user.get_full_name()} "
+            f"({attendance_direction}) em {attendance.timestamp}"
+        )
+        print(
+            f"✓ [BANCO] {student.user.get_full_name()} - {attendance_direction} "
+            f"- {attendance.timestamp.strftime('%H:%M:%S')}"
+        )
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"Erro ao salvar registro de acesso: {str(e)}")
+        print(f"[ERRO] Falha ao salvar registro: {str(e)}")
+        return False
 
 class FaceRecognition:
     def __init__(self, face_dir):
@@ -62,12 +130,12 @@ class FaceRecognition:
             if x_passado < self.LINHA_VIRTUAL_X:
                 if centro_x >= self.LINHA_VIRTUAL_X:
                     estado_movimento = "DIREITA"
-                    print(f">>> {nome} cruzou para a DIREITA.")
+                    logger.debug(f"Movimento detectado: {nome} cruzou para a DIREITA")
                     
             elif x_passado > self.LINHA_VIRTUAL_X:
                 if centro_x <= self.LINHA_VIRTUAL_X:
                     estado_movimento = "ESQUERDA"
-                    print(f"<<< {nome} cruzou para a ESQUERDA.")
+                    logger.debug(f"Movimento detectado: {nome} cruzou para a ESQUERDA")
                     
         self.posicoes_anteriores[nome] = centro_x
         return estado_movimento
@@ -248,7 +316,13 @@ class FaceRecognition:
                     )
                     
                     if movimento:
-                        print(f"[{nome_limpo}] ACESSO LIBERADO: {movimento}.")
+                        # Salvar no banco em vez de apenas fazer print
+                        liveness_score = 1.0 - float(cache["msg"].split(": ")[1]) if ":" in cache["msg"] else 0.98
+                        salvar_registro_acesso(
+                            nome_aluno=nome_limpo,
+                            direcao=movimento,
+                            liveness_score=liveness_score
+                        )
             else:
                 texto_status = "Buscando..."
 

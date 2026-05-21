@@ -5,7 +5,7 @@ class Profile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE)
     is_teacher = models.BooleanField(default=False)
     
-    def __cl__(self):
+    def __str__(self):
         return self.user.username
 
 
@@ -56,10 +56,23 @@ class Attendance(models.Model):
         timestamp: data e hora do reconhecimento pelo totem
         liveness_score: pontuacao do algoritmo de liveness
         is_valid: resultado do liveness
+        direction: sentido do movimento (ENTRADA ou SAÍDA)
     """
     
-    student = models.ForeignKey(Student, on_delete=models.CASCADE)
-    classroom = models.ForeignKey(Classroom, on_delete=models.CASCADE)
+    DIRECTION_CHOICES = [
+        ('ENTRADA', 'Entrada (Esquerda para Direita)'),
+        ('SAÍDA', 'Saída (Direita para Esquerda)'),
+    ]
+    
+    student = models.ForeignKey(Student, on_delete=models.CASCADE, related_name='attendances')
+    classroom = models.ForeignKey(Classroom, on_delete=models.CASCADE, related_name='attendance_records')
     timestamp = models.DateTimeField(auto_now_add=True)
     liveness_score = models.FloatField()
     is_valid = models.BooleanField(default=False)
+    direction = models.CharField(max_length=10, choices=DIRECTION_CHOICES, default='ENTRADA')
+    
+    class Meta:
+        ordering = ['-timestamp']
+    
+    def __str__(self):
+        return f"{self.student.user.get_full_name()} - {self.direction} - {self.timestamp}"

@@ -26,9 +26,9 @@ SECRET_KEY = 'django-insecure-q%6^7aj&kkxi+e_!s#4-2!d(r=q7f2-np=rhcn93^r#kgu4@c6
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['*']
 
-
+CSRF_TRUSTED_ORIGINS = ['https://wisplike-concerned-maternal.ngrok-free.dev']
 # Application definition
 
 INSTALLED_APPS = [

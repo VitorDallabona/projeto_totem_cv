@@ -18,17 +18,25 @@ print("Carregando Modelos de IA na GPU...")
 ia_system = FaceRecognition('media/faces')
 
 def tela_monitoramento(request):
-    """Renderiza a casca do HTML (Botões, menus, logo da empresa)"""
+    """
+    View que prepara o sistema para uma nova 
+    sessão de monitoramento.
+    """
+    
+    # Sincroniza fotos novas
     ia_system.atualizar_banco_rostos()
-    return render(request, 'monitoramento.html')
-
+    
+    # Reseta o estado de liveness (Real/Falso) de todos
+    ia_system.resetar_cache_sessao()
+    
+    return render(
+        request, 
+        'monitoramento.html'
+    )
 def consumir_totem():
     """
     Conecta no Totem via rede, processa a IA e devolve para o HTML
     """
-    
-    # --- A MÁGICA ACONTECE AQUI ---
-    # Em vez de 0, passamos o link exato do Flask do Totem
     IP_DO_TOTEM = '192.168.1.10'
     link_totem = f'http://{IP_DO_TOTEM}:4747/video'
     

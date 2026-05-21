@@ -53,6 +53,15 @@ class FaceRecognition:
         
         print("Sincronização concluída!")
         
+    def resetar_cache_sessao(self):
+        """
+        Limpa o cache de liveness e o histórico 
+        de posições da catraca virtual.
+        """
+        self.liveness_cache.clear()
+        self.posicoes_anteriores.clear()
+        print("Cache de liveness e posições resetados para nova sessão.")
+        
     def verificar_sentido(self, nome, centro_x):
         estado_movimento = None
         

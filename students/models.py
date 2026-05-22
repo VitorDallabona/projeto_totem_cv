@@ -1,5 +1,6 @@
 from django.db import models
 from django.contrib.auth.models import User
+import os
 
 class Profile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE)
@@ -7,6 +8,16 @@ class Profile(models.Model):
     
     def __str__(self):
         return self.user.username
+
+
+def renomear_foto_perfil(instance, filename):
+    """
+    Pega a foto enviada e renomeia 
+    para a matrícula do aluno (ex: '123123123.jpg')
+    """
+    ext = filename.split('.')[-1] # Pega a extensão original (.jpg, .png)
+    novo_nome = f"{instance.registration_id}.{ext}"
+    return os.path.join('faces/', novo_nome)
 
 
 class Student(models.Model):
@@ -23,7 +34,7 @@ class Student(models.Model):
     registration_id = models.CharField(max_length=20, unique=True)
     face_encoding = models.JSONField()
     created_at = models.DateTimeField(auto_now_add=True)
-    profile_photo = models.ImageField(upload_to='faces/', null=True, blank=True)
+    profile_photo = models.ImageField(upload_to=renomear_foto_perfil, null=True, blank=True)
     
     def __str__(self):
         return self.user.get_full_name() or self.user.username

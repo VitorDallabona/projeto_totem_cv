@@ -54,6 +54,11 @@ def salvar_registro_acesso(nome_aluno, direcao, liveness_score=0.0):
             print(f"[AVISO] Nenhuma sala ativa para registrar {nome_aluno}")
             return False
         
+        #trava de segurança caso alguém não matriculado entre na sala de aula
+        if student not in classroom.enrolled_students.all():
+            print(f"[BLOQUEADO] {student.user.first_name} não está matriculado em {classroom.subject}.")
+            return False
+        
         # Criar o registro de presença
         attendance = Attendance.objects.create(
             student=student,

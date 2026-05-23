@@ -31,9 +31,6 @@ urlpatterns = [
     #interfaces e dominio
     path('', include('core.urls')),
     path('students/', include('students.urls')),
-    
-    #rota de comunicação do totem (JSON)
-    path('api/', include('api.urls')), 
 ]
 
 #config para servir os arquivos da pasta /media/ 

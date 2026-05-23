@@ -54,6 +54,12 @@ class Classroom(models.Model):
     
     enrolled_students = models.ManyToManyField(Student, blank=True, related_name='my_classes')
     
+    total_hours = models.IntegerField(default=60, help_text="Carga horária total da disciplina")
+    hours_taught = models.IntegerField(default=0, help_text="Total de horas já ministradas")
+    start_time = models.TimeField(null=True, blank=True, help_text="Ex: 14:00")
+    end_time = models.TimeField(null=True, blank=True, help_text="Ex: 16:00")
+    
+    
     def __str__(self):
         return self.subject
 

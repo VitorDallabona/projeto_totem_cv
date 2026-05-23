@@ -6,6 +6,8 @@ from .models import Student, Attendance, Classroom
 from django.utils import timezone
 from django.http import StreamingHttpResponse
 import json
+from django.conf import settings
+import os
 
 # Imports pesados - comentados para migrations rodarem
 try:
@@ -23,62 +25,6 @@ except ImportError as e:
     print("   Use isso para debugar apenas, migrations funcionam normalmente")
     ia_system = None
 
-
-def tela_monitoramento(request):
-    """Dashboard de monitoramento de entrada/saída para professores"""
-    if ia_system is not None:
-        ia_system.atualizar_banco_rostos()
-    
-    # Data atual
-    hoje = timezone.now().date()
-    
-    # Filtros opcionais
-    sala_id = request.GET.get('sala')
-    data_filtro = request.GET.get('data', str(hoje))
-    
-    try:
-        data_filtro = timezone.datetime.strptime(data_filtro, '%Y-%m-%d').date()
-    except:
-        data_filtro = hoje
-    
-    # Query base
-    query = Attendance.objects.filter(timestamp__date=data_filtro)
-    
-    if sala_id:
-        query = query.filter(classroom_id=sala_id)
-    
-    # Estatísticas básicas
-    total_acessos = query.count()
-    entradas = query.filter(direction='ENTRADA').count()
-    saidas = query.filter(direction='SAÍDA').count()
-    
-    # Alunos com entrada registrada
-    alunos_com_entrada = query.filter(direction='ENTRADA').values_list('student_id', flat=True).distinct()
-    alunos_com_saida = query.filter(direction='SAÍDA').values_list('student_id', flat=True).distinct()
-    
-    # Alunos presentes (entraram mas NÃO saíram)
-    alunos_presentes_ids = set(alunos_com_entrada) - set(alunos_com_saida)
-    alunos_presentes = Student.objects.filter(id__in=alunos_presentes_ids).order_by('user__first_name')
-    
-    # Histórico completo do dia (todos os acessos)
-    historico = query.order_by('-timestamp')
-    
-    # Salas disponíveis
-    salas = Classroom.objects.all()
-    
-    context = {
-        'historico': historico,
-        'total_acessos': total_acessos,
-        'entradas': entradas,
-        'saidas': saidas,
-        'alunos_presentes': alunos_presentes,
-        'alunos_presentes_count': len(alunos_presentes),
-        'salas': salas,
-        'sala_selecionada': sala_id,
-        'data_selecionada': data_filtro,
-    }
-    
-    return render(request, 'monitoramento.html', context)
 
 
 def video_feed(request):
@@ -192,13 +138,17 @@ def register_student(request):
 
 @login_required
 def update_student_photo(request, student_id):
-    is_authorized = (hasattr(request.user, 'profile') and request.user.profile.is_teacher) or request.user.is_superuser
-    
-    if not is_authorized:
-        return redirect('dashboard')
-        
     student = get_object_or_404(Student, id=student_id)
     
+    # É professor ou Admin?
+    is_teacher_or_admin = (hasattr(request.user, 'profile') and request.user.profile.is_teacher) or request.user.is_superuser
+    # É o próprio aluno acessando o próprio perfil?
+    is_own_student = hasattr(request.user, 'student_profile') and request.user.student_profile.id == student.id
+    
+    if not (is_teacher_or_admin or is_own_student):
+        # Bloqueia se um aluno tentar alterar a foto de OUTRO aluno
+        return redirect('student_absences') if hasattr(request.user, 'student_profile') else redirect('teacher_dashboard')
+        
     if request.method == 'POST' and request.FILES.get('new_photo'):
         try:
             photo = request.FILES['new_photo']
@@ -207,17 +157,32 @@ def update_student_photo(request, student_id):
             img = img.convert('RGB')
             img_array = np.array(img)
             
+            # Validação rápida de rosto
             encodings = face_recognition.face_encodings(img_array)
             
             if encodings:
                 student.profile_photo = photo
                 student.face_encoding = encodings[0].tolist()
                 student.save()
-                return redirect('dashboard')
+                
+                # integração com o totem
+                # Apaga o cache para forçar o encodes.py a rodar com GPU na nova foto
+                caminho_cache = os.path.join(settings.MEDIA_ROOT, 'faces', 'encodes.json')
+                if os.path.exists(caminho_cache):
+                    try:
+                        os.remove(caminho_cache)
+                    except Exception as e:
+                        print(f"Erro ao limpar cache: {e}")
+                
+                # redirecionamento
+                if is_own_student:
+                    return redirect('student_absences')
+                else:
+                    return redirect('teacher_dashboard')
             else:
                 return render(request, 'students/update_photo.html', {
                     'student': student, 
-                    'error': 'Nenhum rosto detectado na nova foto.'
+                    'error': 'Nenhum rosto detectado na nova foto. Tente uma foto mais iluminada.'
                 })
         except Exception as e:
             return render(request, 'students/update_photo.html', {

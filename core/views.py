@@ -25,9 +25,10 @@ def start_class(request, class_id):
         # Obtém a quantidade de aulas em sequência (padrão de 2 horas)
         num_hours = int(request.POST.get('num_hours', 2))
         
-        agora = timezone.localtime(timezone.now())
-        classroom.start_time = agora.time()
-        classroom.end_time = (agora + timedelta(hours=num_hours)).time()
+        # SALVA A CARGA HORÁRIA NA MEMÓRIA TEMPORÁRIA DO PROFESSOR (Sem mexer na grade fixa do banco)
+        request.session[f'class_{classroom.id}_hours'] = num_hours
+        
+        # Apenas ativa a aula (start_time e end_time permanecem intactos com o horário oficial!)
         classroom.active_now = True
         classroom.save()
         
@@ -38,19 +39,19 @@ def end_class(request, class_id):
     if request.method == 'POST':
         classroom = get_object_or_404(Classroom, id=class_id)
         
-        if classroom.active_now and classroom.start_time and classroom.end_time:
-            # Calcula a diferença planejada em horas e adiciona ao histórico da disciplina
-            inicio = datetime.combine(datetime.today(), classroom.start_time)
-            fim = datetime.combine(datetime.today(), classroom.end_time)
-            horas_ministradas = int((fim - inicio).total_seconds() / 3600)
+        if classroom.active_now:
+            # Resgata a quantidade de horas que guardamos no início da aula (e já apaga da memória)
+            # Se por acaso o professor mudou de computador, o .pop assume 2 horas como fallback de segurança
+            horas_ministradas = request.session.pop(f'class_{classroom.id}_hours', 2)
             
+            # Adiciona ao histórico de horas dadas na disciplina
             classroom.hours_taught += horas_ministradas
             
-        classroom.active_now = False
-        classroom.save()
-        
+            # Encerra a aula no totem
+            classroom.active_now = False
+            classroom.save()
+            
     return redirect(f"{reverse('dashboard')}?class_id={class_id}")
-
 
 @login_required
 def teacher_dashboard(request):
@@ -161,6 +162,7 @@ def teacher_dashboard(request):
         'selected_class': selected_class,
         'stats': stats,
     }
+    context['all_students_global'] = Student.objects.all().order_by('user__first_name')
     return render(request, 'core/teacher_dashboard.html', context)
 
 

@@ -36,6 +36,21 @@ class Student(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     profile_photo = models.ImageField(upload_to=renomear_foto_perfil, null=True, blank=True)
     
+    @property
+    def photo_url(self):
+        """Retorna a URL da foto com um marcador de versão baseado na modificação do arquivo para evitar cache do navegador"""
+        if self.profile_photo and os.path.isfile(self.profile_photo.path):
+            try:
+                #obtém o timestamp da última modificação do arquivo físico
+                mtime = int(os.path.getmtime(self.profile_photo.path))
+                return f"{self.profile_photo.url}?v={mtime}"
+            except OSError:
+                return self.profile_photo.url
+        elif self.profile_photo:
+            return self.profile_photo.url
+        return ""
+    
+    
     def __str__(self):
         return self.user.get_full_name() or self.user.username
     
@@ -49,7 +64,7 @@ class Classroom(models.Model):
         
     """
     subject = models.CharField(max_length=100)
-    teacher = models.CharField(max_length=100)
+    teacher = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='classrooms_taught')
     active_now = models.BooleanField(default=False)
     
     enrolled_students = models.ManyToManyField(Student, blank=True, related_name='my_classes')

@@ -107,7 +107,7 @@ class AISpoofManager:
         # Como voce iterou por 2 modelos, divide por 2 para tirar a media
         confianca = previsao_total[0][label_vencedor] / 2
         
-        LIMITE_CONFIANCA = 0.92 
+        LIMITE_CONFIANCA = 0.90 
         
         if label_vencedor == 1 and confianca >= LIMITE_CONFIANCA:
             return True, f"REAL: {confianca:.2f}"

@@ -5,10 +5,12 @@ from django.contrib.auth.decorators import login_required
 from .forms import StudentRegistrationForm
 from .models import Student, Attendance, Classroom
 from django.utils import timezone
-from django.http import StreamingHttpResponse
+from django.http import StreamingHttpResponse, HttpResponse, JsonResponse
 import json
 from django.conf import settings
 import os
+import threading
+import time
 from .forms import ClassroomForm
 
 # Imports pesados - comentados para migrations rodarem
@@ -26,6 +28,27 @@ except ImportError as e:
     print(f"⚠️  Aviso: Algumas dependências não estão instaladas: {e}")
     print("   Use isso para debugar apenas, migrations funcionam normalmente")
     ia_system = None
+
+
+latest_processed_frame = None
+latest_frame_lock = threading.Lock()
+
+
+def get_placeholder_frame_bytes():
+    import cv2
+
+    img = np.zeros((480, 640, 3), dtype=np.uint8)
+    cv.putText(
+        img,
+        'Aguardando camera local...',
+        (90, 230),
+        cv.FONT_HERSHEY_SIMPLEX,
+        0.8,
+        (255, 255, 255),
+        2,
+    )
+    sucesso, buffer = cv2.imencode('.jpg', img)
+    return buffer.tobytes() if sucesso else b''
 
 
 
@@ -76,55 +99,18 @@ def manage_class_students(request, class_id):
 
 
 def video_feed(request):
-    """Endpoint de câmera - retorna stream de vídeo para o HTML"""
+    """Retorna o stream MJPEG com o último frame processado pela IA."""
     def generate_frames():
         try:
             import cv2
-            
-            # Se ia_system é None, retorna imagem preta com mensagem
-            if ia_system is None:
-                from PIL import Image, ImageDraw
-                import numpy as np
-                
-                img = Image.new('RGB', (640, 480), color='black')
-                draw = ImageDraw.Draw(img)
-                draw.text((180, 220), "Câmera/IA não disponível", fill='white')
-                
-                img_array = np.array(img)
-                ret, buffer = cv2.imencode('.jpg', img_array)
-                frame_bytes = buffer.tobytes()
-                
-                while True:
-                    yield (b'--frame\r\n'
-                           b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
-                return
-            
-            # --- AQUI ESTÁ A MÁGICA ---
-            # O número 0 diz para o OpenCV usar a câmera embutida do notebook
-            #camera = cv2.VideoCapture(0)
-            
-            IP_DO_TOTEM = '192.168.1.10'
-            link_totem = f'http://{IP_DO_TOTEM}:4747/video'
-            camera = cv.VideoCapture(link_totem)
-
+            placeholder_bytes = get_placeholder_frame_bytes()
             while True:
-                ret, frame = camera.read()
-                
-                if not ret:
-                    break
-                
-                # Opcional: Espelha a câmera para o movimento ficar natural
-                frame = cv2.flip(frame, 1)
-                
-                # Processa com a IA
-                frame_processado = ia_system.run_recognition(frame)
-                
-                # Codifica o frame final (com as caixas da IA) para JPEG
-                ret, buffer = cv2.imencode('.jpg', frame_processado)
-                frame_bytes = buffer.tobytes()
-                
+                with latest_frame_lock:
+                    frame_bytes = latest_processed_frame or placeholder_bytes
+
                 yield (b'--frame\r\n'
                        b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+                time.sleep(0.08)
         
         except Exception as e:
             print(f"Erro no video_feed: {e}")
@@ -134,6 +120,40 @@ def video_feed(request):
         generate_frames(),
         content_type='multipart/x-mixed-replace; boundary=frame'
     )
+
+
+def process_local_camera_frame(request):
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Método não permitido.'}, status=405)
+
+    if ia_system is None:
+        return JsonResponse({'error': 'IA indisponível no momento.'}, status=503)
+
+    uploaded_frame = request.FILES.get('frame')
+    if not uploaded_frame:
+        return JsonResponse({'error': 'Nenhum frame recebido.'}, status=400)
+
+    try:
+        frame_bytes = np.frombuffer(uploaded_frame.read(), dtype=np.uint8)
+        frame = cv.imdecode(frame_bytes, cv.IMREAD_COLOR)
+
+        if frame is None:
+            return JsonResponse({'error': 'Não foi possível ler a imagem enviada.'}, status=400)
+
+        frame = cv.flip(frame, 1)
+        frame_processado = ia_system.run_recognition(frame)
+
+        sucesso, buffer = cv.imencode('.jpg', frame_processado)
+        if not sucesso:
+            return JsonResponse({'error': 'Falha ao codificar o frame processado.'}, status=500)
+
+        global latest_processed_frame
+        with latest_frame_lock:
+            latest_processed_frame = buffer.tobytes()
+
+        return JsonResponse({'ok': True})
+    except Exception as e:
+        return JsonResponse({'error': f'Falha ao processar frame: {e}'}, status=500)
 
 def register_student(request):
     if request.method == 'POST':

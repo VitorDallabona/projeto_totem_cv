@@ -28,7 +28,7 @@ DEBUG = True
 
 ALLOWED_HOSTS = ['*']
 
-CSRF_TRUSTED_ORIGINS = ['https://wisplike-concerned-maternal.ngrok-free.dev']
+CSRF_TRUSTED_ORIGINS = ['http://100.118.142.5:8000']
 # Application definition
 
 INSTALLED_APPS = [

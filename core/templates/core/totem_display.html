@@ -24,7 +24,9 @@
             display: flex;
             justify-content: center;
             align-items: center;
+            position: relative;
         }
+        .camera-container video,
         .camera-container img {
             width: 100%;
             height: 100%;
@@ -45,7 +47,17 @@
         <div class="row justify-content-center">
             <div class="col-12 col-md-10 col-lg-8">
                 <div class="camera-container">
-                    <img src="{% url 'video_feed' %}" alt="Feed do Totem" id="totem-feed">
+                    <img id="totem-feed" src="{% url 'video_feed' %}" alt="Feed processado pela IA" style="display: block;">
+                    <video id="totem-camera" autoplay playsinline muted style="display: none;"></video>
+                    <div id="camera-placeholder" class="text-center px-4 py-5">
+                        <p class="fw-semibold mb-2">Câmera local não iniciada</p>
+                        <small class="text-secondary">Clique em ativar para usar a câmera deste navegador.</small>
+                    </div>
+                </div>
+
+                <div class="d-flex justify-content-center gap-2 mt-3">
+                    <button type="button" id="btn-start-camera" class="btn btn-success fw-semibold px-4">Ativar Câmera</button>
+                    <button type="button" id="btn-stop-camera" class="btn btn-outline-light fw-semibold px-4" style="display: none;">Desativar</button>
                 </div>
             </div>
         </div>
@@ -55,6 +67,112 @@
         <div class="spinner-grow spinner-grow-sm text-success me-2" role="status"></div>
         <small>Sistema de Reconhecimento Facial Ativo e Monitorando</small>
     </div>
+
+    <form id="csrf-form" style="display: none;">
+        {% csrf_token %}
+    </form>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const video = document.getElementById('totem-camera');
+            const feed = document.getElementById('totem-feed');
+            const placeholder = document.getElementById('camera-placeholder');
+            const btnStart = document.getElementById('btn-start-camera');
+            const btnStop = document.getElementById('btn-stop-camera');
+            const csrfToken = document.querySelector('#csrf-form input[name="csrfmiddlewaretoken"]').value;
+            const processUrl = "{% url 'process_local_camera_frame' %}";
+
+            const captureCanvas = document.createElement('canvas');
+            const captureContext = captureCanvas.getContext('2d');
+
+            let stream = null;
+            let processTimer = null;
+            let isProcessing = false;
+
+            async function startCamera() {
+                try {
+                    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
+                    video.srcObject = stream;
+                    video.style.display = 'block';
+                    feed.style.display = 'block';
+                    placeholder.style.display = 'none';
+                    btnStart.style.display = 'none';
+                    btnStop.style.display = 'inline-block';
+
+                    if (processTimer) {
+                        clearInterval(processTimer);
+                    }
+
+                    processTimer = setInterval(sendFrameToAI, 700);
+                } catch (error) {
+                    alert('Erro ao acessar a câmera: ' + error.message);
+                }
+            }
+
+            function stopCamera() {
+                if (processTimer) {
+                    clearInterval(processTimer);
+                    processTimer = null;
+                }
+
+                if (stream) {
+                    stream.getTracks().forEach(track => track.stop());
+                    stream = null;
+                }
+
+                video.srcObject = null;
+                video.style.display = 'none';
+                feed.style.display = 'block';
+                placeholder.style.display = 'block';
+                btnStart.style.display = 'inline-block';
+                btnStop.style.display = 'none';
+            }
+
+            async function sendFrameToAI() {
+                if (isProcessing || !stream || video.videoWidth === 0 || video.videoHeight === 0) {
+                    return;
+                }
+
+                isProcessing = true;
+
+                try {
+                    captureCanvas.width = video.videoWidth;
+                    captureCanvas.height = video.videoHeight;
+                    captureContext.drawImage(video, 0, 0, captureCanvas.width, captureCanvas.height);
+
+                    const blob = await new Promise((resolve) => captureCanvas.toBlob(resolve, 'image/jpeg', 0.85));
+
+                    if (!blob) {
+                        return;
+                    }
+
+                    const formData = new FormData();
+                    formData.append('frame', blob, 'frame.jpg');
+
+                    const response = await fetch(processUrl, {
+                        method: 'POST',
+                        headers: {
+                            'X-CSRFToken': csrfToken
+                        },
+                        body: formData
+                    });
+
+                    if (!response.ok) {
+                        return;
+                    }
+                } catch (error) {
+                    console.error('Falha ao enviar frame para a IA:', error);
+                } finally {
+                    isProcessing = false;
+                }
+            }
+
+            btnStart.addEventListener('click', startCamera);
+            btnStop.addEventListener('click', stopCamera);
+
+            window.addEventListener('beforeunload', stopCamera);
+        });
+    </script>
 
 </body>
 </html>

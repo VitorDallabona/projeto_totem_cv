@@ -4,7 +4,7 @@ import json
 import numpy as np
 
 def carregar_rostos_conhecidos(face_dir):
-    pasta_json = "media/faces"
+    pasta_json = face_dir
     caminho_json = os.path.join(pasta_json, "encodes.json")
     
     if not os.path.exists(pasta_json):
@@ -14,12 +14,31 @@ def carregar_rostos_conhecidos(face_dir):
 
     if os.path.exists(caminho_json):
         print(f"Carregando cache de rostos de {caminho_json}...")
-        with open(caminho_json, 'r') as arquivo:
-            dados_rostos = json.load(arquivo)
+        try:
+            with open(caminho_json, 'r') as arquivo:
+                dados_rostos = json.load(arquivo)
+        except json.JSONDecodeError:
+            print("AVISO: encodes.json corrompido. Recriando cache do zero.")
+            dados_rostos = {}
     else:
         print("Nenhum cache encontrado.")
 
-    houve_atualizacao = False
+    arquivos_face = {
+        os.path.splitext(person)[0]
+        for person in os.listdir(face_dir)
+        if person.lower().endswith(('.png', '.jpg', '.jpeg'))
+    }
+
+    chaves_json = set(dados_rostos.keys())
+    chaves_orfas = chaves_json - arquivos_face
+    chaves_faltantes = arquivos_face - chaves_json
+
+    if chaves_orfas:
+        print(f"Removendo {len(chaves_orfas)} encodes sem arquivo correspondente...")
+        for chave in chaves_orfas:
+            del dados_rostos[chave]
+
+    houve_atualizacao = bool(chaves_orfas)
 
     for person in os.listdir(face_dir):
         if not person.lower().endswith(('.png', '.jpg', '.jpeg')):
@@ -50,6 +69,9 @@ def carregar_rostos_conhecidos(face_dir):
             houve_atualizacao = True
         else:
             print(f"AVISO: Nenhum rosto achado na foto {person}!")
+
+    if not houve_atualizacao and not chaves_faltantes:
+        print("Cache de rostos já está sincronizado com a pasta faces.")
 
     if houve_atualizacao:
         with open(caminho_json, 'w') as arquivo:

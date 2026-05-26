@@ -101,8 +101,12 @@ def video_feed(request):
             
             # --- AQUI ESTÁ A MÁGICA ---
             # O número 0 diz para o OpenCV usar a câmera embutida do notebook
-            camera = cv2.VideoCapture(0)
+            #camera = cv2.VideoCapture(0)
             
+            IP_DO_TOTEM = '192.168.1.10'
+            link_totem = f'http://{IP_DO_TOTEM}:4747/video'
+            camera = cv.VideoCapture(link_totem)
+
             while True:
                 ret, frame = camera.read()
                 

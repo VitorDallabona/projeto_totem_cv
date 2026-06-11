@@ -10,54 +10,45 @@
         body {
             background-color: #121212;
             color: #ffffff;
-            min-height: 100vh; /* Permite rolar se a tela for hiper pequena */
+            min-height: 100vh;
         }
-        .camera-container {
-            width: 100%;
-            /* Limita o tamanho máximo da câmera para sobrar espaço pro texto */
-            max-height: 70vh; 
-            background: #000;
+        .painel-status {
+            background: #1e1e1e;
             border-radius: 15px;
-            overflow: hidden;
-            box-shadow: 0 10px 30px rgba(39, 174, 96, 0.15);
-            border: 3px solid #27ae60;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            position: relative;
-        }
-        .camera-container video,
-        .camera-container img {
-            width: 100%;
-            height: 100%;
-            max-height: 70vh;
-            /* contain garante que o vídeo inteiro apareça sem dar zoom cortando as bordas */
-            object-fit: contain; 
+            border: 2px solid #27ae60;
+            box-shadow: 0 10px 30px rgba(39, 174, 96, 0.1);
         }
     </style>
 </head>
-<body class="d-flex flex-column justify-content-between py-4 px-3">
+<body class="d-flex flex-column justify-content-between py-5 px-3">
 
-    <div class="text-center mb-3">
-        <h1 class="display-4 fw-bold text-success mb-2">Controle de Acesso Biométrico</h1>
-        <p class="text-secondary fs-5">Posicione seu rosto em frente à câmera para registrar presença</p>
+    <div class="text-center mb-4">
+        <h1 class="display-4 fw-bold text-success mb-2">Terminal de Acesso Biométrico</h1>
+        <p class="text-secondary fs-5">Aproxima-se da câmera instalada para validar sua presença</p>
     </div>
 
-    <div class="container-fluid flex-grow-1 d-flex flex-column justify-content-center">
+    <div class="container py-3 flex-grow-1 d-flex flex-column justify-content-center">
         <div class="row justify-content-center">
-            <div class="col-12 col-md-10 col-lg-8">
-                <div class="camera-container">
-                    <img id="totem-feed" src="{% url 'video_feed' %}" alt="Feed processado pela IA" style="display: block;">
-                    <video id="totem-camera" autoplay playsinline muted style="display: none;"></video>
-                    <div id="camera-placeholder" class="text-center px-4 py-5">
-                        <p class="fw-semibold mb-2">Câmera local não iniciada</p>
-                        <small class="text-secondary">Clique em ativar para usar a câmera deste navegador.</small>
+            <div class="col-12 col-lg-10">
+                <div class="painel-status p-4">
+                    <h3 class="h5 text-success mb-3 fw-semibold">Últimas Confirmações de Entrada</h3>
+                    <div class="table-responsive">
+                        <table class="table table-dark table-striped align-middle mb-0">
+                            <thead>
+                                <tr>
+                                    <th>Horário</th>
+                                    <th>Nome do Aluno</th>
+                                    <th>Matrícula</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td colspan="4" class="text-center text-muted py-4">Iniciando monitoramento de acessos...</td>
+                                </tr>
+                            </tbody>
+                        </table>
                     </div>
-                </div>
-
-                <div class="d-flex justify-content-center gap-2 mt-3">
-                    <button type="button" id="btn-start-camera" class="btn btn-success fw-semibold px-4">Ativar Câmera</button>
-                    <button type="button" id="btn-stop-camera" class="btn btn-outline-light fw-semibold px-4" style="display: none;">Desativar</button>
                 </div>
             </div>
         </div>
@@ -65,114 +56,42 @@
 
     <div class="text-center mt-4 text-secondary">
         <div class="spinner-grow spinner-grow-sm text-success me-2" role="status"></div>
-        <small>Sistema de Reconhecimento Facial Ativo e Monitorando</small>
+        <small>Terminal Ativo - Monitoramento de Fluxo por IP Ligado</small>
     </div>
 
-    <form id="csrf-form" style="display: none;">
-        {% csrf_token %}
-    </form>
-
     <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            const video = document.getElementById('totem-camera');
-            const feed = document.getElementById('totem-feed');
-            const placeholder = document.getElementById('camera-placeholder');
-            const btnStart = document.getElementById('btn-start-camera');
-            const btnStop = document.getElementById('btn-stop-camera');
-            const csrfToken = document.querySelector('#csrf-form input[name="csrfmiddlewaretoken"]').value;
-            const processUrl = "{% url 'process_local_camera_frame' %}";
-
-            const captureCanvas = document.createElement('canvas');
-            const captureContext = captureCanvas.getContext('2d');
-
-            let stream = null;
-            let processTimer = null;
-            let isProcessing = false;
-
-            async function startCamera() {
-                try {
-                    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
-                    video.srcObject = stream;
-                    video.style.display = 'block';
-                    feed.style.display = 'block';
-                    placeholder.style.display = 'none';
-                    btnStart.style.display = 'none';
-                    btnStop.style.display = 'inline-block';
-
-                    if (processTimer) {
-                        clearInterval(processTimer);
-                    }
-
-                    processTimer = setInterval(sendFrameToAI, 700);
-                } catch (error) {
-                    alert('Erro ao acessar a câmera: ' + error.message);
-                }
-            }
-
-            function stopCamera() {
-                if (processTimer) {
-                    clearInterval(processTimer);
-                    processTimer = null;
-                }
-
-                if (stream) {
-                    stream.getTracks().forEach(track => track.stop());
-                    stream = null;
-                }
-
-                video.srcObject = null;
-                video.style.display = 'none';
-                feed.style.display = 'block';
-                placeholder.style.display = 'block';
-                btnStart.style.display = 'inline-block';
-                btnStop.style.display = 'none';
-            }
-
-            async function sendFrameToAI() {
-                if (isProcessing || !stream || video.videoWidth === 0 || video.videoHeight === 0) {
-                    return;
-                }
-
-                isProcessing = true;
-
-                try {
-                    captureCanvas.width = video.videoWidth;
-                    captureCanvas.height = video.videoHeight;
-                    captureContext.drawImage(video, 0, 0, captureCanvas.width, captureCanvas.height);
-
-                    const blob = await new Promise((resolve) => captureCanvas.toBlob(resolve, 'image/jpeg', 0.85));
-
-                    if (!blob) {
+        function fetchAttendances(){
+            fetch('/dados-recentes/')
+                .then(response => response.json())
+                .then(data => {
+                    const tbody = document.querySelector('table tbody');
+                    tbody.innerHTML = ''; 
+                    
+                    if(data.length === 0){
+                        tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-3">Aguardando aproximação no totem...</td></tr>';
                         return;
                     }
 
-                    const formData = new FormData();
-                    formData.append('frame', blob, 'frame.jpg');
-
-                    const response = await fetch(processUrl, {
-                        method: 'POST',
-                        headers: {
-                            'X-CSRFToken': csrfToken
-                        },
-                        body: formData
+                    data.forEach(att => {
+                        let badge = att.is_valid
+                            ? '<span class="badge bg-success">Validado</span>'
+                            : `<span class="badge bg-danger">Suspeito (${att.liveness_score})</span>`;
+                        
+                        let row = `<tr>
+                            <td>${att.horario}</td>
+                            <td>${att.aluno_nome}</td>
+                            <td>${att.matricula}</td>
+                            <td>${badge}</td>
+                        </tr>`;
+                        tbody.innerHTML += row;
                     });
+                })
+                .catch(error => console.error('Erro ao buscar logs do banco:', error));
+        }
 
-                    if (!response.ok) {
-                        return;
-                    }
-                } catch (error) {
-                    console.error('Falha ao enviar frame para a IA:', error);
-                } finally {
-                    isProcessing = false;
-                }
-            }
-
-            btnStart.addEventListener('click', startCamera);
-            btnStop.addEventListener('click', stopCamera);
-
-            window.addEventListener('beforeunload', stopCamera);
-        });
+        // Executa imediatamente e define o intervalo leve de atualização (3 segundos)
+        fetchAttendances();
+        setInterval(fetchAttendances, 3000);
     </script>
-
 </body>
 </html>

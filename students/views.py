@@ -7,9 +7,15 @@ from .models import Student, Attendance, Classroom
 from django.utils import timezone
 from django.http import StreamingHttpResponse
 import json
+from django.http import JsonResponse
 from django.conf import settings
 import os
 from .forms import ClassroomForm
+import base64
+from django.views.decorators.csrf import csrf_exempt
+import cv2
+import numpy as np
+from datetime import timedelta
 
 # Imports pesados - comentados para migrations rodarem
 try:
@@ -267,3 +273,130 @@ def update_student_photo(request, student_id):
             return render(request, 'students/update_photo.html', {'student': student})
 
     return render(request, 'students/update_photo.html', {'student': student})
+
+
+CACHE_BIOMETRIA = {}
+
+def registrar_ponto(student, classroom, modo):
+    """
+    Máquina de Estados de Presença com Fuso Horário (Brasil) Corrigido.
+    """
+    agora = timezone.localtime(timezone.now())
+    cooldown = agora - timedelta(minutes=2)
+    
+    ultimo_registro = Attendance.objects.filter(
+        student=student,
+        classroom=classroom,
+        timestamp__date=agora.date()
+    ).order_by('-timestamp').first()
+
+    # Bloqueio anti-spam (ignora se leu a mesma pessoa nos últimos 2 minutos)
+    if ultimo_registro and ultimo_registro.timestamp > cooldown:
+        return False # Não registrou nada novo
+
+    if modo == 'varredura':
+        # Na Chamada Panorâmica, só damos ENTRADA.
+        if not ultimo_registro or ultimo_registro.direction != 'ENTRADA':
+            Attendance.objects.create(
+                student=student,
+                classroom=classroom,
+                direction='ENTRADA',
+                liveness_score=1.0
+            )
+            return True
+            
+    elif modo == 'totem':
+        # No Totem fixo, intercala entre Entrada e Saída
+        nova_direcao = 'SAIDA' if (ultimo_registro and ultimo_registro.direction == 'ENTRADA') else 'ENTRADA'
+        Attendance.objects.create(
+            student=student,
+            classroom=classroom,
+            direction=nova_direcao,
+            liveness_score=1.0
+        )
+        return True
+        
+    return False
+
+@csrf_exempt
+def processar_frame_camera(request):
+    if request.method == 'POST':
+        image_data = request.POST.get('image')
+        modo_operacao = request.POST.get('modo') 
+        class_id = request.POST.get('class_id')
+
+        if not class_id:
+            return JsonResponse({"status": "erro", "mensagem": "Turma não informada."}, status=400)
+
+        try:
+            classroom = Classroom.objects.get(id=class_id)
+        except Classroom.DoesNotExist:
+            return JsonResponse({"status": "erro", "mensagem": "Turma não encontrada."}, status=400)
+
+        if not classroom.active_now:
+            return JsonResponse({"status": "ignorado", "mensagem": "Aula inativa."})
+
+        if image_data:
+            try:
+                format, imgstr = image_data.split(';base64,')
+                img_bytes = base64.b64decode(imgstr)
+                np_arr = np.frombuffer(img_bytes, np.uint8)
+                frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+                
+                if frame is None:
+                    raise ValueError("Falha na decodificação da imagem.")
+
+                # Reduz o tamanho da imagem pela metade 
+                small_frame = cv2.resize(frame, (0, 0), fx=0.5, fy=0.5)
+                rgb_small_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
+
+                face_locations = face_recognition.face_locations(rgb_small_frame)
+                face_encodings = face_recognition.face_encodings(rgb_small_frame, face_locations)
+
+                rostos_reconhecidos = []
+                houve_mudanca = False # Flag para avisar a tela se deve atualizar a tabela
+
+                if face_encodings:
+                    # Carrega do Cache em vez de consultar o banco de dados toda hora
+                    if class_id not in CACHE_BIOMETRIA:
+                        alunos = classroom.enrolled_students.all()
+                        known_enc = []
+                        known_ids = []
+                        for aluno in alunos:
+                            if aluno.face_encoding:
+                                enc_list = json.loads(aluno.face_encoding) if isinstance(aluno.face_encoding, str) else aluno.face_encoding
+                                if isinstance(enc_list, list) and len(enc_list) == 128:
+                                    known_enc.append(np.array(enc_list))
+                                    known_ids.append(aluno)
+                        CACHE_BIOMETRIA[class_id] = (known_enc, known_ids)
+                    
+                    known_encodings, known_students = CACHE_BIOMETRIA[class_id]
+
+                    if known_encodings:
+                        for face_encoding in face_encodings:
+                            face_distances = face_recognition.face_distance(known_encodings, face_encoding)
+                            matches = face_recognition.compare_faces(known_encodings, face_encoding, tolerance=0.55)
+                            
+                            if len(face_distances) > 0:
+                                best_match_index = np.argmin(face_distances)
+                                
+                                if matches[best_match_index]:
+                                    student = known_students[best_match_index]
+                                    # Se a função retornar True, significa que um ponto novo foi gravado
+                                    if registrar_ponto(student, classroom, modo_operacao):
+                                        houve_mudanca = True
+                                        
+                                    rostos_reconhecidos.append(student.user.get_full_name())
+
+                return JsonResponse({
+                    "status": "sucesso", 
+                    "rostos_processados": len(face_locations),
+                    "reconhecidos": rostos_reconhecidos,
+                    "atualizar_tela": houve_mudanca # Manda o sinal pro Javascript atualizar os números
+                })
+
+            except Exception as e:
+                print(f"ERRO NA IA: {str(e)}")
+                return JsonResponse({"status": "erro", "mensagem": str(e)}, status=400)
+                
+    return JsonResponse({"status": "invalido"}, status=400)

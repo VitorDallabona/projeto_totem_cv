@@ -34,6 +34,8 @@ def start_class(request, class_id):
         
     return redirect(f"{reverse('dashboard')}?class_id={class_id}")
 
+
+
 @login_required
 def end_class(request, class_id):
     if request.method == 'POST':
@@ -52,6 +54,8 @@ def end_class(request, class_id):
             classroom.save()
             
     return redirect(f"{reverse('dashboard')}?class_id={class_id}")
+
+
 
 @login_required
 def teacher_dashboard(request):

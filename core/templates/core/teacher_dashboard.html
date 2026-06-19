@@ -2,15 +2,15 @@
 {% load static %}
 
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-4">
+<div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3 mb-4">
     <div>
-        <h2 class="fw-bold text-dark mb-0" style="letter-spacing: -0.5px;">Painel de Controle</h2>
+        <h2 class="fw-bold text-dark mb-0 fs-3" style="letter-spacing: -0.5px;">Painel de Controle</h2>
         <span class="text-muted small">Gestão de Presença Biométrica</span>
     </div>
-    <div class="d-flex gap-2">
-        <a href="{% url 'totem_display' %}" target="_blank" class="btn btn-outline-secondary fw-semibold px-4 rounded-3 shadow-sm">Abrir Totem</a>
-        <a href="{% url 'create_classroom' %}" class="btn btn-outline-primary fw-semibold px-4 rounded-3 shadow-sm">Nova Turma</a>
-        <a href="{% url 'register' %}" class="btn btn-primary fw-semibold px-4 rounded-3 shadow-sm">Novo Aluno</a>
+    <div class="d-flex flex-column flex-sm-row gap-2">
+        <a href="{% url 'totem_display' %}" target="_blank" class="btn btn-outline-secondary fw-semibold px-4 rounded-3 shadow-sm w-80 text-center">Abrir Totem</a>
+        <a href="{% url 'create_classroom' %}" class="btn btn-outline-primary fw-semibold px-4 rounded-3 shadow-sm w-80 text-center">Nova Turma</a>
+        <a href="{% url 'register' %}" class="btn btn-primary fw-semibold px-4 rounded-3 shadow-sm w-80 text-center">Novo Aluno</a>
     </div>
 </div>
 
@@ -18,15 +18,15 @@
     <div class="card-body p-4">
         <div class="row align-items-center gap-3 gap-md-0">
             <div class="col-md-7">
-                <form method="get" class="d-flex gap-3 align-items-center mb-0" id="filterForm">
-                    <div>
+                <form method="get" class="row g-3 align-items-end mb-0" id="filterForm">
+                    <div class="col-12 col-sm-auto">
                         <label class="form-label text-muted small fw-bold text-uppercase mb-1" style="font-size: 0.7rem;">Data da Aula</label>
-                        <input type="date" name="data" value="{{ data_selecionada|default:'' }}" class="form-control bg-light border-0 text-secondary fw-medium rounded-3" style="min-width: 150px;" onchange="this.form.submit()">
+                        <input type="date" name="data" value="{{ data_selecionada|default:'' }}" class="form-control bg-light border-0 text-secondary fw-medium rounded-3 w-100" style="min-width: 150px;" onchange="this.form.submit()">
                     </div>
                     
-                    <div class="flex-grow-1" style="max-width: 400px;">
+                    <div class="col-12 col-sm">
                         <label class="form-label text-muted small fw-bold text-uppercase mb-1" style="font-size: 0.7rem;">Turma</label>
-                        <select name="class_id" class="form-select bg-light border-0 text-dark fw-semibold rounded-3" onchange="this.form.submit()">
+                        <select name="class_id" class="form-select bg-light border-0 text-dark fw-semibold rounded-3 w-100" onchange="this.form.submit()">
                             <option value="" class="text-muted">Selecione uma turma...</option>
                             {% for c in classrooms %}
                                 <option value="{{ c.id }}" {% if c == selected_class %}selected{% endif %}>
@@ -41,33 +41,33 @@
                 </form>
             </div>
 
-            <div class="col-md-5">
+            <div class="col-md-5 mt-3 mt-md-0">
                 <div class="d-flex justify-content-md-end align-items-center gap-2 border-start-md ps-md-3 h-100">
                     {% if selected_class %}
                         {% if selected_class.active_now %}
-                            <form method="post" action="{% url 'end_class' selected_class.id %}" class="mb-0">
+                            <form method="post" action="{% url 'end_class' selected_class.id %}" class="mb-0 w-100 w-md-auto">
                                 {% csrf_token %}
-                                <button type="submit" class="btn btn-danger fw-semibold rounded-3 px-4 shadow-sm">
+                                <button type="submit" class="btn btn-danger fw-semibold rounded-3 px-4 shadow-sm w-80">
                                     Encerrar Aula
                                 </button>
                             </form>
                         {% else %}
-                            <form method="post" action="{% url 'start_class' selected_class.id %}" class="d-flex align-items-center gap-2 mb-0">
+                            <form method="post" action="{% url 'start_class' selected_class.id %}" class="d-flex align-items-center gap-2 mb-0 w-100 w-md-auto">
                                 {% csrf_token %}
-                                <div>
-                                    <select name="num_hours" class="form-select bg-light border-0 fw-medium rounded-3" style="width: 120px;">
+                                <div class="flex-grow-1 flex-md-grow-0">
+                                    <select name="num_hours" class="form-select bg-light border-0 fw-medium rounded-3 w-100" style="min-width: 120px;">
                                         <option value="1">1 Aula (1h)</option>
                                         <option value="2" selected>2 Aulas (2h)</option>
                                         <option value="3">3 Aulas (3h)</option>
                                         <option value="4">4 Aulas (4h)</option>
                                     </select>
                                 </div>
-                                <button type="submit" class="btn btn-success fw-semibold rounded-3 px-4 shadow-sm">
+                                <button type="submit" class="btn btn-success fw-semibold rounded-3 px-4 shadow-sm text-nowrap">
                                     Iniciar Aula
                                 </button>
                             </form>
                         {% endif %}
-                        <a href="{% url 'export_csv' selected_class.id %}" class="btn btn-outline-success fw-semibold rounded-3 px-3 shadow-sm ms-2">
+                        <a href="{% url 'export_csv' selected_class.id %}" class="btn btn-outline-success fw-semibold rounded-3 px-3 shadow-sm ms-2 d-none d-sm-inline-block">
                             Exportar CSV
                         </a>
                     {% endif %}
@@ -126,26 +126,26 @@
                     <table class="table table-hover align-middle mb-0">
                         <thead class="table-light sticky-top">
                             <tr>
-                                <th class="text-muted fw-semibold border-0 py-3 ps-4" style="font-size: 0.85rem;">HORÁRIO</th>
+                                <th class="text-muted fw-semibold border-0 py-3 ps-3 ps-md-4" style="font-size: 0.85rem;">HORÁRIO</th>
                                 <th class="text-muted fw-semibold border-0 py-3" style="font-size: 0.85rem;">ALUNO</th>
-                                <th class="text-muted fw-semibold border-0 py-3" style="font-size: 0.85rem;">MATRÍCULA</th>
-                                <th class="text-muted fw-semibold border-0 py-3 pe-4" style="font-size: 0.85rem;">DIREÇÃO</th>
+                                <th class="text-muted fw-semibold border-0 py-3 d-none d-sm-table-cell" style="font-size: 0.85rem;">MATRÍCULA</th>
+                                <th class="text-muted fw-semibold border-0 py-3 pe-3 pe-md-4 text-end text-sm-start" style="font-size: 0.85rem;">DIREÇÃO</th>
                             </tr>
                         </thead>
                         <tbody>
                             {% for att in recent_attendances %}
                             <tr>
-                                <td class="text-secondary fw-medium ps-4">{{ att.timestamp|time:"H:i:s" }}</td>
+                                <td class="text-secondary fw-medium ps-3 ps-md-4" style="font-size: 0.9rem;">{{ att.timestamp|time:"H:i" }}</td>
                                 <td class="fw-semibold text-dark">
                                     {{ att.student.user.get_full_name }}
                                     <div class="mt-1 d-flex gap-2" style="font-size: 0.7rem;">
-                                        <span class="text-success fw-bold">ENTRADA: {{ att.total_entradas }}</span>
-                                        <span class="text-danger fw-bold">SAÍDA: {{ att.total_saidas }}</span>
+                                        <span class="text-success fw-bold">EN: {{ att.total_entradas }}</span>
+                                        <span class="text-danger fw-bold">SA: {{ att.total_saidas }}</span>
                                     </div>
                                 </td>
-                                <td class="text-secondary">{{ att.student.registration_id }}</td>
-                                <td class="pe-4">
-                                    <span class="badge rounded-pill fw-bold px-3 py-1 border {% if att.direction == 'ENTRADA' %}bg-success bg-opacity-10 text-success border-success{% else %}bg-danger bg-opacity-10 text-danger border-danger{% endif %} border-opacity-50">
+                                <td class="text-secondary d-none d-sm-table-cell">{{ att.student.registration_id }}</td>
+                                <td class="pe-3 pe-md-4 text-end text-sm-start">
+                                    <span class="badge rounded-pill fw-bold px-2 px-md-3 py-1 border {% if att.direction == 'ENTRADA' %}bg-success bg-opacity-10 text-success border-success{% else %}bg-danger bg-opacity-10 text-danger border-danger{% endif %} border-opacity-50" style="font-size: 0.75rem;">
                                         {{ att.direction }}
                                     </span>
                                 </td>
@@ -167,14 +167,18 @@
     <div class="col-md-4">
         <div class="card border-0 shadow-sm rounded-4 mb-4 overflow-hidden">
             <div class="card-header bg-dark text-white border-bottom-0 py-3 px-4 d-flex justify-content-between align-items-center">
-                <h6 class="mb-0 fw-bold text-uppercase" style="font-size: 0.8rem; letter-spacing: 0.5px;">
-                    Câmera do Totem
+                <h6 class="mb-0 fw-bold text-uppercase d-flex align-items-center gap-2" style="font-size: 0.8rem; letter-spacing: 0.5px;">
+                    Câmera
+                    <select id="cameraMode" class="form-select form-select-sm border-0 bg-light fw-bold text-dark" style="width: auto; font-size: 0.7rem; padding: 2px 24px 2px 8px;" onchange="if(document.getElementById('camSwitch').checked) toggleCamera();">
+                    <option value="varredura">Chamada (Celular)</option>
+                    <option value="totem">Totem (Servidor)</option>
+                </select>
                 </h6>
                 <div class="form-check form-switch m-0">
                     <input class="form-check-input" type="checkbox" id="camSwitch" onchange="toggleCamera()" style="cursor: pointer;">
                 </div>
             </div>
-            <div class="card-body p-0 bg-light text-center" id="camera-container" style="min-height: 200px; display: flex; align-items: center; justify-content: center;">
+            <div class="card-body p-0 bg-light text-center position-relative" id="camera-container" style="min-height: 400px; display: flex; align-items: center; justify-content: center; overflow: hidden;">
                 <span class="text-muted small fw-medium text-uppercase tracking-wider">Câmera Desativada</span>
             </div>
         </div>
@@ -336,21 +340,132 @@
         }
     });
 
-    // Função da Câmera
-    function toggleCamera() {
+    // Streaming do Servidor vs AJAX Polling do Celular
+    let videoStream = null;
+    let processInterval = null;
+    let isProcessing = false;
+
+    async function toggleCamera() {
         const container = document.getElementById('camera-container');
         const toggle = document.getElementById('camSwitch');
-        const videoUrl = "{% url 'video_feed' %}"; 
+        const modeSelect = document.getElementById('cameraMode');
+        
+        const classSelect = document.querySelector('select[name="class_id"]');
+        const classId = classSelect ? classSelect.value : null;
+
+        if (videoStream) {
+            videoStream.getTracks().forEach(track => track.stop());
+            videoStream = null;
+        }
+        if (processInterval) {
+            clearInterval(processInterval);
+            processInterval = null;
+        }
+        isProcessing = false;
 
         if (toggle.checked) {
-            container.innerHTML = `<img src="${videoUrl}" style="width: 100%; height: 200px; object-fit: cover;">`;
+            if (!classId) {
+                alert("Selecione uma turma ativa primeiro para usar a câmera.");
+                toggle.checked = false;
+                return;
+            }
+
             container.classList.replace('bg-light', 'bg-dark');
+            if (modeSelect.value === 'totem') {
+                const videoUrl = "{% url 'video_feed' %}"; 
+                container.innerHTML = `<img src="${videoUrl}" style="width: 100%; height: 200px; object-fit: cover; border-radius: inherit;">`;
+                return;
+            }
+            container.innerHTML = `
+                <video id="live-video" autoplay playsinline style="width: 100%; height: 200px; object-fit: cover;"></video>
+                <canvas id="hidden-canvas" style="display: none;"></canvas>
+                <div id="cam-feedback" class="position-absolute top-0 end-0 m-2 badge bg-success shadow-sm" style="display:none; font-size: 0.75rem;"></div>
+            `;
+
+            const video = document.getElementById('live-video');
+            const canvas = document.getElementById('hidden-canvas');
+            const ctx = canvas.getContext('2d');
+            const feedback = document.getElementById('cam-feedback');
+
+            try {
+                videoStream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: "environment" }
+                });
+                video.srcObject = videoStream;
+
+                processInterval = setInterval(() => {
+                    if (video.readyState === video.HAVE_ENOUGH_DATA && !isProcessing) {
+                        isProcessing = true; 
+
+                        const maxSize = 640;
+                        const scale = Math.min(maxSize / video.videoWidth, maxSize / video.videoHeight);
+                        canvas.width = video.videoWidth * scale;
+                        canvas.height = video.videoHeight * scale;
+                        
+                        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                        const imageData = canvas.toDataURL('image/jpeg', 0.6);
+
+                        const formData = new FormData();
+                        formData.append('image', imageData);
+                        formData.append('modo', modeSelect.value);
+                        formData.append('class_id', classId);
+                        formData.append('csrfmiddlewaretoken', document.querySelector('[name=csrfmiddlewaretoken]').value);
+
+                        fetch("{% url 'process_frame' %}", {
+                            method: 'POST',
+                            body: formData
+                        })
+                        .then(res => res.json())
+                        .then(data => {
+                            if (data.status === "sucesso" && data.reconhecidos.length > 0) {
+                                feedback.style.display = 'block';
+                                feedback.innerText = `✔️ ${data.reconhecidos[0]}`;
+                                setTimeout(() => feedback.style.display = 'none', 1500);
+
+                                if (data.atualizar_tela) {
+                                    atualizarDashboardSilenciosamente();
+                                }
+                            }
+                        })
+                        .catch(err => console.error("Erro na rede:", err))
+                        .finally(() => { isProcessing = false; });
+                    }
+                }, 400);
+
+            } catch (err) {
+                alert("Erro ao acessar a câmera do aparelho.");
+                toggle.checked = false;
+                container.innerHTML = `<span class="text-muted small fw-medium text-uppercase tracking-wider">Câmera Desativada</span>`;
+                container.classList.replace('bg-dark', 'bg-light');
+            }
+            
         } else {
             container.innerHTML = `<span class="text-muted small fw-medium text-uppercase tracking-wider">Câmera Desativada</span>`;
             container.classList.replace('bg-dark', 'bg-light');
         }
     }
 
+    function atualizarDashboardSilenciosamente() {
+        fetch(window.location.href)
+        .then(response => response.text())
+        .then(html => {
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, 'text/html');
+            
+            const statsAtuais = document.querySelector('.row.text-center.text-md-start.g-4');
+            const statsNovos = doc.querySelector('.row.text-center.text-md-start.g-4');
+            if (statsAtuais && statsNovos) statsAtuais.innerHTML = statsNovos.innerHTML;
+            
+            const tabelaAtual = document.querySelector('.table-responsive tbody');
+            const tabelaNova = doc.querySelector('.table-responsive tbody');
+            if (tabelaAtual && tabelaNova) tabelaAtual.innerHTML = tabelaNova.innerHTML;
+            
+            const listaAtual = document.querySelector('.list-group-flush');
+            const listaNova = doc.querySelector('.list-group-flush');
+            if (listaAtual && listaNova) listaAtual.innerHTML = listaNova.innerHTML;
+        });
+    }
+    
     // Sistema de Busca do Modal de Alunos
     document.addEventListener("DOMContentLoaded", function() {
         const searchInput = document.getElementById('search-modal-student');

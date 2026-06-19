@@ -52,6 +52,11 @@ class ClassroomForm(forms.ModelForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # Ajusta a exibição da lista de alunos para Nome (Matrícula)
+        
+        # ajusta a lista de professores (Mostra apenas usuários com profile.is_teacher=True)
+        self.fields['teacher'].queryset = User.objects.filter(profile__is_teacher=True).order_by('first_name')
+        self.fields['teacher'].label_from_instance = lambda obj: f"Prof. {obj.get_full_name()}"
+        
+        # ajusta a exibição da lista de alunos
         self.fields['enrolled_students'].queryset = Student.objects.all().order_by('user__first_name')
         self.fields['enrolled_students'].label_from_instance = lambda obj: f"{obj.user.get_full_name()} ({obj.registration_id})"

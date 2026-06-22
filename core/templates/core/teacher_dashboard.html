@@ -372,15 +372,28 @@
 
             container.classList.replace('bg-light', 'bg-dark');
                 // Both modes use the device camera now. UI is the same; constraints differ by mode.
-                container.innerHTML = `
-                <video id="live-video" autoplay playsinline style="width: 100%; height: 200px; object-fit: cover;"></video>
-                <canvas id="hidden-canvas" style="display: none;"></canvas>
-                <div id="cam-feedback" class="position-absolute top-0 end-0 m-2 badge bg-success shadow-sm" style="display:none; font-size: 0.75rem;"></div>
-            `;
+                                container.innerHTML = `
+                                <div style="position: relative; width: 100%; height: 200px; overflow: hidden;">
+                                    <video id="live-video" autoplay playsinline style="width: 100%; height: 100%; object-fit: cover;"></video>
+                                    <canvas id="cam-overlay" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none;"></canvas>
+                                </div>
+                                <canvas id="hidden-canvas" style="display: none;"></canvas>
+                                <div id="cam-feedback" class="position-absolute top-0 end-0 m-2 badge bg-success shadow-sm" style="display:none; font-size: 0.75rem;"></div>
+                                `;
 
             const video = document.getElementById('live-video');
             const canvas = document.getElementById('hidden-canvas');
             const ctx = canvas.getContext('2d');
+            const overlay = document.getElementById('cam-overlay');
+            const overlayCtx = overlay.getContext('2d');
+
+            function syncOverlaySize() {
+                overlay.width = overlay.clientWidth;
+                overlay.height = overlay.clientHeight;
+            }
+            window.addEventListener('resize', syncOverlaySize);
+            video.addEventListener('loadedmetadata', syncOverlaySize);
+            syncOverlaySize();
             const feedback = document.getElementById('cam-feedback');
 
             try {
@@ -423,10 +436,20 @@
                         })
                         .then(res => res.json())
                         .then(data => {
-                            if (data.status === "sucesso" && data.reconhecidos.length > 0) {
-                                feedback.style.display = 'block';
-                                feedback.innerText = `✔️ ${data.reconhecidos[0]}`;
-                                setTimeout(() => feedback.style.display = 'none', 1500);
+                            if (data.status === "sucesso") {
+                                if (Array.isArray(data.faces) && data.faces.length > 0) {
+                                    // draw boxes scaled to overlay
+                                    drawFacesOnOverlay(data.faces, data.image_w, data.image_h);
+                                } else {
+                                    // clear overlay if no faces
+                                    overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+                                }
+
+                                if (data.reconhecidos && data.reconhecidos.length > 0) {
+                                    feedback.style.display = 'block';
+                                    feedback.innerText = `✔️ ${data.reconhecidos[0]}`;
+                                    setTimeout(() => feedback.style.display = 'none', 1500);
+                                }
 
                                 if (data.atualizar_tela) {
                                     atualizarDashboardSilenciosamente();
@@ -449,6 +472,72 @@
             container.innerHTML = `<span class="text-muted small fw-medium text-uppercase tracking-wider">Câmera Desativada</span>`;
             container.classList.replace('bg-dark', 'bg-light');
         }
+    }
+
+    function drawFacesOnOverlay(faces, imageW, imageH) {
+        const overlay = document.getElementById('cam-overlay');
+        if (!overlay) return;
+        const ctx = overlay.getContext('2d');
+
+        // Limpa o frame anterior
+        ctx.clearRect(0, 0, overlay.width, overlay.height);
+
+        if (!imageW || !imageH) return;
+
+        // Matemática para mapear as coordenadas quando se usa "object-fit: cover"
+        const videoRatio = imageW / imageH;
+        const overlayRatio = overlay.width / overlay.height;
+        
+        let drawWidth = overlay.width;
+        let drawHeight = overlay.height;
+        let offsetX = 0;
+        let offsetY = 0;
+
+        if (videoRatio > overlayRatio) {
+            // O vídeo original é mais "largo" que a tela, então as laterais estão cortadas (cover)
+            drawHeight = overlay.height;
+            drawWidth = overlay.height * videoRatio;
+            offsetX = (overlay.width - drawWidth) / 2;
+        } else {
+            // O vídeo original é mais "alto" que a tela, então o topo/fundo estão cortados (cover)
+            drawWidth = overlay.width;
+            drawHeight = overlay.width / videoRatio;
+            offsetY = (overlay.height - drawHeight) / 2;
+        }
+
+        const scaleX = drawWidth / imageW;
+        const scaleY = drawHeight / imageH;
+
+        faces.forEach(f => {
+            if (!f.box) return;
+            
+            // Aplica as proporções com os offsets calculados
+            const left = (f.box.left * scaleX) + offsetX;
+            const top = (f.box.top * scaleY) + offsetY;
+            const right = (f.box.right * scaleX) + offsetX;
+            const bottom = (f.box.bottom * scaleY) + offsetY;
+            
+            const w = right - left;
+            const h = bottom - top;
+
+            const color = f.color || '#00FF00';
+            ctx.strokeStyle = color;
+            ctx.lineWidth = Math.max(2, Math.round(Math.min(overlay.width, overlay.height) * 0.003));
+            ctx.strokeRect(left, top, w, h);
+
+            // Rótulo de texto
+            const label = `${f.name || 'Desconhecido'} | ${f.status || ''}`;
+            ctx.font = `${Math.max(12, Math.round(overlay.height * 0.04))}px sans-serif`;
+            const textW = ctx.measureText(label).width;
+            const pad = 6;
+            const labelX = left;
+            const labelY = Math.max(0, top - Math.round(overlay.height * 0.05));
+
+            ctx.fillStyle = color;
+            ctx.fillRect(labelX, labelY, textW + pad * 2, Math.round(overlay.height * 0.06));
+            ctx.fillStyle = '#fff';
+            ctx.fillText(label, labelX + pad, labelY + Math.round(overlay.height * 0.045));
+        });
     }
 
     function atualizarDashboardSilenciosamente() {

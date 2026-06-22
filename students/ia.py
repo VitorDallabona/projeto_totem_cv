@@ -95,7 +95,7 @@ class FaceRecognition:
         self.liveness_cache = {}
         # --- Configurações da Linha Virtual ---
         self.posicoes_anteriores = {}
-        self.LINHA_VIRTUAL_X = 320 
+       # self.LINHA_VIRTUAL_X = 320 
         
         # --- Configurações do Rastreador ---
         self.trackers = {} 
@@ -126,19 +126,19 @@ class FaceRecognition:
         
         print("Sincronização concluída!")
         
-    def verificar_sentido(self, nome, centro_x):
+    def verificar_sentido(self, nome, centro_x, linha_virtual_x):
         estado_movimento = None
         
         if nome in self.posicoes_anteriores:
             x_passado = self.posicoes_anteriores[nome]
             
-            if x_passado < self.LINHA_VIRTUAL_X:
-                if centro_x >= self.LINHA_VIRTUAL_X:
+            if x_passado < linha_virtual_x:
+                if centro_x >= linha_virtual_x:
                     estado_movimento = "DIREITA"
                     logger.debug(f"Movimento detectado: {nome} cruzou para a DIREITA")
                     
-            elif x_passado > self.LINHA_VIRTUAL_X:
-                if centro_x <= self.LINHA_VIRTUAL_X:
+            elif x_passado > linha_virtual_x:
+                if centro_x <= linha_virtual_x:
                     estado_movimento = "ESQUERDA"
                     logger.debug(f"Movimento detectado: {nome} cruzou para a ESQUERDA")
                     
@@ -147,6 +147,9 @@ class FaceRecognition:
 
     def run_recognition(self, frame):
         self.contador_frames += 1
+        
+        altura_frame, largura_frame = frame.shape[:2]
+        linha_virtual_x = largura_frame // 2 # Corta exatamente no meio
         
         caixas_desenho = {} 
         
@@ -317,7 +320,8 @@ class FaceRecognition:
                     centro_x = int((left + right) / 2)
                     movimento = self.verificar_sentido(
                         nome_limpo, 
-                        centro_x
+                        centro_x,
+                        linha_virtual_x
                     )
                     
                     if movimento:
@@ -373,8 +377,8 @@ class FaceRecognition:
         
         cv.line(
             frame, 
-            (self.LINHA_VIRTUAL_X, 0), 
-            (self.LINHA_VIRTUAL_X, altura_frame), 
+            (linha_virtual_x, 0), 
+            (linha_virtual_x, altura_frame), 
             (0, 0, 255), 
             2
         )

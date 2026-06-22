@@ -10,11 +10,10 @@
         body {
             background-color: #121212;
             color: #ffffff;
-            min-height: 100vh; /* Permite rolar se a tela for hiper pequena */
+            min-height: 100vh;
         }
         .camera-container {
             width: 100%;
-            /* Limita o tamanho máximo da câmera para sobrar espaço pro texto */
             max-height: 70vh; 
             background: #000;
             border-radius: 15px;
@@ -26,13 +25,32 @@
             align-items: center;
             position: relative;
         }
-        .camera-container video,
-        .camera-container img {
+
+        .video-wrapper {
+            position: relative;
             width: 100%;
             height: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        #totem-camera {
+            width: 100%;
             max-height: 70vh;
-            /* contain garante que o vídeo inteiro apareça sem dar zoom cortando as bordas */
-            object-fit: contain; 
+            object-fit: contain;
+            /* Espelha o vídeo para agir como um espelho real para o usuário */
+            transform: scaleX(-1);
+        }
+
+        #overlay-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            /* Deixa o mouse passar direto pelo canvas e clicar no que estiver atrás (se houver) */
+            pointer-events: none;
         }
     </style>
 </head>
@@ -47,12 +65,17 @@
         <div class="row justify-content-center">
             <div class="col-12 col-md-10 col-lg-8">
                 <div class="camera-container">
-                    <img id="totem-feed" src="{% url 'video_feed' %}" alt="Feed processado pela IA" style="display: block;">
-                    <video id="totem-camera" autoplay playsinline muted style="display: none;"></video>
+                    
                     <div id="camera-placeholder" class="text-center px-4 py-5">
                         <p class="fw-semibold mb-2">Câmera local não iniciada</p>
                         <small class="text-secondary">Clique em ativar para usar a câmera deste navegador.</small>
                     </div>
+
+                    <div class="video-wrapper" id="video-ui" style="display: none;">
+                        <video id="totem-camera" autoplay playsinline muted></video>
+                        <canvas id="overlay-canvas"></canvas>
+                    </div>
+
                 </div>
 
                 <div class="d-flex justify-content-center gap-2 mt-3">
@@ -73,79 +96,144 @@
     </form>
 
     <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            const video = document.getElementById('totem-camera');
-            const feed = document.getElementById('totem-feed');
-            const placeholder = document.getElementById('camera-placeholder');
-            const btnStart = document.getElementById('btn-start-camera');
-            const btnStop = document.getElementById('btn-stop-camera');
-            const csrfToken = document.querySelector('#csrf-form input[name="csrfmiddlewaretoken"]').value;
-            const processUrl = "{% url 'process_local_camera_frame' %}";
+    document.addEventListener('DOMContentLoaded', function() {
+        const video = document.getElementById('totem-camera');
+        const videoUi = document.getElementById('video-ui');
+        const overlay = document.getElementById('overlay-canvas');
+        const overlayCtx = overlay.getContext('2d');
+        const placeholder = document.getElementById('camera-placeholder');
+        const btnStart = document.getElementById('btn-start-camera');
+        const btnStop = document.getElementById('btn-stop-camera');
+        const csrfToken = document.querySelector('#csrf-form input[name="csrfmiddlewaretoken"]').value;
+        const processUrl = "{% url 'process_local_camera_frame' %}";
 
-            const captureCanvas = document.createElement('canvas');
-            const captureContext = captureCanvas.getContext('2d');
+        const captureCanvas = document.createElement('canvas');
+        const captureContext = captureCanvas.getContext('2d');
 
-            let stream = null;
-            let processTimer = null;
-            let isProcessing = false;
+        let stream = null;
+        let isProcessing = false;
 
-            async function startCamera() {
-                try {
-                    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
-                    video.srcObject = stream;
-                    video.style.display = 'block';
-                    feed.style.display = 'block';
-                    placeholder.style.display = 'none';
-                    btnStart.style.display = 'none';
-                    btnStop.style.display = 'inline-block';
+        async function startCamera() {
+            try {
+                // DIETA DE RESOLUÇÃO: Força 720p no máximo para a rede voar!
+                stream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        facingMode: 'user',
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    },
+                    audio: false
+                });
 
-                    if (processTimer) {
-                        clearInterval(processTimer);
-                    }
+                video.srcObject = stream;
 
-                    processTimer = setInterval(sendFrameToAI, 700);
-                } catch (error) {
-                    alert('Erro ao acessar a câmera: ' + error.message);
-                }
+                videoUi.style.display = 'flex';
+                placeholder.style.display = 'none';
+                btnStart.style.display = 'none';
+                btnStop.style.display = 'inline-block';
+
+                syncOverlaySize();
+                isProcessing = false;
+                sendFrameToAI(); // Dispara o motor de processamento
+            } catch (error) {
+                alert('Erro ao acessar a câmera: ' + error.message);
+            }
+        }
+
+        function stopCamera() {
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+                stream = null;
             }
 
-            function stopCamera() {
-                if (processTimer) {
-                    clearInterval(processTimer);
-                    processTimer = null;
-                }
+            video.srcObject = null;
+            overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+            videoUi.style.display = 'none';
+            placeholder.style.display = 'block';
+            btnStart.style.display = 'inline-block';
+            btnStop.style.display = 'none';
+        }
 
-                if (stream) {
-                    stream.getTracks().forEach(track => track.stop());
-                    stream = null;
-                }
+        // Garante que o vidro transparente tenha exatamente o mesmo tamanho do vídeo
+        function syncOverlaySize() {
+            if (video.videoWidth > 0 && video.videoHeight > 0) {
+                overlay.width = video.videoWidth;
+                overlay.height = video.videoHeight;
+            }
+        }
 
-                video.srcObject = null;
-                video.style.display = 'none';
-                feed.style.display = 'block';
-                placeholder.style.display = 'block';
-                btnStart.style.display = 'inline-block';
-                btnStop.style.display = 'none';
+        // Função que pinta o vidro usando os dados do Django
+        function drawOverlays(faces = [], lineX = null) {
+            syncOverlaySize();
+            overlayCtx.clearRect(0, 0, overlay.width, overlay.height); // Apaga a tela do frame anterior
+
+            // Desenha a linha de catraca (se enviada pelo Django)
+            if (lineX !== null && Number.isFinite(lineX)) {
+                overlayCtx.strokeStyle = '#FF0000';
+                overlayCtx.lineWidth = 2;
+                overlayCtx.beginPath();
+                // Importante: Como o vídeo é espelhado no CSS, invertemos o X da linha
+                const invertedLineX = overlay.width - lineX; 
+                overlayCtx.moveTo(invertedLineX, 0);
+                overlayCtx.lineTo(invertedLineX, overlay.height);
+                overlayCtx.stroke();
             }
 
-            async function sendFrameToAI() {
-                if (isProcessing || !stream || video.videoWidth === 0 || video.videoHeight === 0) {
-                    return;
-                }
+            faces.forEach(face => {
+                if (!face.box) return;
 
-                isProcessing = true;
+                // Como o vídeo no CSS tem scaleX(-1) (espelhado), nós invertemos as coordenadas X no canvas
+                // Obs: O OpenCV no Python (com cv.flip) já pode estar fazendo isso, então teste.
+                // Se a caixa ficar desenhada no lado oposto do rosto, remova essa conta "overlay.width -".
+                const left = face.box.left;
+                const top = face.box.top;
+                const right = face.box.right;
+                const bottom = face.box.bottom;
+                const width = right - left;
+                const height = bottom - top;
+                const color = face.color || '#00FF00';
 
-                try {
-                    captureCanvas.width = video.videoWidth;
-                    captureCanvas.height = video.videoHeight;
-                    captureContext.drawImage(video, 0, 0, captureCanvas.width, captureCanvas.height);
+                // Desenha a moldura (bounding box)
+                overlayCtx.strokeStyle = color;
+                overlayCtx.lineWidth = 3;
+                overlayCtx.strokeRect(left, top, width, height);
 
-                    const blob = await new Promise((resolve) => captureCanvas.toBlob(resolve, 'image/jpeg', 0.85));
+                // Desenha o fundo para o texto
+                const labelText = `${face.name || 'Desconhecido'} | ${face.status || ''}`;
+                overlayCtx.font = 'bold 16px Arial';
+                const textWidth = overlayCtx.measureText(labelText).width;
+                const labelHeight = 28;
+                const labelTop = Math.max(0, bottom); // Coloca embaixo da caixa
 
-                    if (!blob) {
-                        return;
-                    }
+                overlayCtx.fillStyle = color;
+                overlayCtx.fillRect(left, labelTop, width, labelHeight);
 
+                // Escreve o texto
+                overlayCtx.fillStyle = '#000000'; // Texto preto para dar contraste
+                overlayCtx.fillText(labelText, left + 6, labelTop + 20);
+            });
+        }
+
+        async function sendFrameToAI() {
+            if (!stream) return; // Parada de segurança se a câmera for desligada
+
+            // Se o Django não respondeu o frame passado ou a câmera está carregando, espera um milissegundo e tenta de novo
+            if (isProcessing || video.videoWidth === 0 || video.videoHeight === 0) {
+                requestAnimationFrame(sendFrameToAI);
+                return;
+            }
+
+            isProcessing = true; // Trava o barramento
+
+            try {
+                captureCanvas.width = video.videoWidth;
+                captureCanvas.height = video.videoHeight;
+                captureContext.drawImage(video, 0, 0, captureCanvas.width, captureCanvas.height);
+
+                // Compressão agressiva em 60% para I/O instantâneo na rede
+                const blob = await new Promise((resolve) => captureCanvas.toBlob(resolve, 'image/jpeg', 0.60));
+
+                if (blob) {
                     const formData = new FormData();
                     formData.append('frame', blob, 'frame.jpg');
 
@@ -157,21 +245,30 @@
                         body: formData
                     });
 
-                    if (!response.ok) {
-                        return;
+                    if (response.ok) {
+                        const data = await response.json();
+                        // Manda o "pintor" desenhar os dados que voltaram da placa de vídeo
+                        drawOverlays(data.faces || [], data.line_x ?? null);
                     }
-                } catch (error) {
-                    console.error('Falha ao enviar frame para a IA:', error);
-                } finally {
-                    isProcessing = false;
                 }
+            } catch (error) {
+                console.error('Falha ao enviar frame para a IA:', error);
+            } finally {
+                // A liberação do barramento!
+                isProcessing = false; 
+                // Assim que termina um ciclo, já agenda o próximo.
+                requestAnimationFrame(sendFrameToAI); 
             }
+        }
 
-            btnStart.addEventListener('click', startCamera);
-            btnStop.addEventListener('click', stopCamera);
-
-            window.addEventListener('beforeunload', stopCamera);
-        });
+        btnStart.addEventListener('click', startCamera);
+        btnStop.addEventListener('click', stopCamera);
+        
+        // Garante que o vidro acompanhe o vídeo se a janela do navegador mudar de tamanho
+        window.addEventListener('resize', syncOverlaySize);
+        video.addEventListener('loadedmetadata', syncOverlaySize);
+        window.addEventListener('beforeunload', stopCamera);
+    });
     </script>
 
 </body>

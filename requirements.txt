@@ -15,7 +15,7 @@ keras>=2.2.0
 lightdsa>=0.0.3
 lightphe>=0.0.15
 mtcnn>=0.1.0
-numpy==2.4.4
+numpy
 opencv-python==4.13.0.92
 pandas>=0.23.4
 Pillow==12.2.0

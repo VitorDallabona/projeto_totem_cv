@@ -1,21 +1,16 @@
 import os
 import logging
 
-# Imports pesados - comentados para shells/migrations
-try:
-    import face_recognition
-    import cv2 as cv
-    import math
-    import numpy as np
-    import dlib
-    from cv2 import cuda
-    from .encodes import carregar_rostos_conhecidos
-    from .liveness import AISpoofManager
-    print(dlib.DLIB_USE_CUDA)
-except ImportError as e:
-    print(f"⚠️  Aviso: Importações pesadas indisponíveis: {e}")
-    print("   Função salvar_registro_acesso() funcionará normalmente")
-
+import face_recognition
+import cv2 as cv
+import math
+import numpy as np
+import dlib
+from cv2 import cuda
+import torch
+from .encodes import carregar_rostos_conhecidos
+from .liveness import AISpoofManager
+print(dlib.DLIB_USE_CUDA)
 from .models import Student, Attendance, Classroom
 
 # Configurar logger para debug
@@ -95,13 +90,14 @@ class FaceRecognition:
         self.liveness_cache = {}
         # --- Configurações da Linha Virtual ---
         self.posicoes_anteriores = {}
-        self.LINHA_VIRTUAL_X = 320 
+        self.LINHA_VIRTUAL_X = 640 
         
         # --- Configurações do Rastreador ---
         self.trackers = {} 
         self.contador_frames = 0
-        self.FRAMES_ATUALIZACAO = 10
+        self.FRAMES_ATUALIZACAO = 1
         self.FATOR_ESCALA = 1
+        self.last_faces_data = []
         
         listas = carregar_rostos_conhecidos(
             self.face_dir
@@ -109,6 +105,12 @@ class FaceRecognition:
         
         self.knownFaceEncodings = listas[0]
         self.knownFaceNames = listas[1]
+
+
+    @staticmethod
+    def _bgr_to_hex(cor_bgr):
+        b, g, r = cor_bgr
+        return f"#{int(r):02X}{int(g):02X}{int(b):02X}"
 
     def atualizar_banco_rostos(self):
         """
@@ -145,10 +147,12 @@ class FaceRecognition:
         self.posicoes_anteriores[nome] = centro_x
         return estado_movimento
 
-    def run_recognition(self, frame):
+    def run_recognition(self, frame, frame_offset=(0, 0)):
         self.contador_frames += 1
+        offset_x, offset_y = frame_offset
         
         caixas_desenho = {} 
+        faces_data = []
         
         # ---------------------------------------------------------
         # FASE 1: DETECÇÃO PESADA (A cada 15 frames)
@@ -157,70 +161,52 @@ class FaceRecognition:
             
             self.trackers.clear()
             
-            small_frame = cv.resize(
-                frame, 
-                (0,0), 
-                fx=self.FATOR_ESCALA, 
-                fy=self.FATOR_ESCALA
-            )
-            
-            rgb_small_frame = cv.cvtColor(
-                small_frame, 
-                cv.COLOR_BGR2RGB
-            )        
+            small_frame = cv.resize(frame, (0,0), fx=self.FATOR_ESCALA, fy=self.FATOR_ESCALA)
+            rgb_small_frame = cv.cvtColor(small_frame, cv.COLOR_BGR2RGB)        
 
-            face_locations = face_recognition.face_locations(
-                rgb_small_frame, 
-                model="cnn"
-            )
-            
-            face_encodings = face_recognition.face_encodings(
-                rgb_small_frame, 
-                face_locations
-            )
+            face_locations = face_recognition.face_locations(rgb_small_frame, model="cnn")
+            face_encodings = face_recognition.face_encodings(rgb_small_frame, face_locations)
+
+            contador_desconhecidos = 0
 
             for (top, right, bottom, left), face_encoding in zip(face_locations, face_encodings):
                 
-                # --- NOVA TRAVA DE SEGURANÇA ---
-                # Só faz a matemática se o banco de rostos não estiver vazio
+                nome = "Unknown"
+                nome_exibicao = "Buscando..."
+                
                 if len(self.knownFaceEncodings) > 0:
                     
-                    matches = face_recognition.compare_faces(
-                        self.knownFaceEncodings, 
-                        face_encoding
-                    )
-                    
-                    face_distances = face_recognition.face_distance(
-                        self.knownFaceEncodings, 
-                        face_encoding
-                    )
+                    # TOLERÂNCIA ESTRITA (0.50): Reduz drasticamente falsos positivos (pessoas confundidas)
+                    matches = face_recognition.compare_faces(self.knownFaceEncodings, face_encoding, tolerance=0.60)
+                    face_distances = face_recognition.face_distance(self.knownFaceEncodings, face_encoding)
                     
                     matchIndex = np.argmin(face_distances)
 
                     if matches[matchIndex]:
                         nome = self.knownFaceNames[matchIndex]
-                        confianca = face_conf(
-                            face_distances[matchIndex]
-                        )
+                        confianca = face_conf(face_distances[matchIndex])
                         nome_exibicao = f'{nome} ({confianca})'
-                        
-                        mult = int(1 / self.FATOR_ESCALA)
-                        top *= mult
-                        right *= mult
-                        bottom *= mult
-                        left *= mult
-                        
-                        w = right - left
-                        h = bottom - top
-                        
-                        tracker = cv.TrackerCSRT_create()
-                        tracker.init(
-                            frame, 
-                            (left, top, w, h)
-                        )
-                        
-                        self.trackers[nome_exibicao] = tracker
-                        caixas_desenho[nome_exibicao] = (left, top, right, bottom)
+                    else:
+                        contador_desconhecidos += 1
+                        nome_exibicao = f'Unknown {contador_desconhecidos}'
+                else:
+                    contador_desconhecidos += 1
+                    nome_exibicao = f'Unknown {contador_desconhecidos}'
+
+                mult = int(1 / self.FATOR_ESCALA)
+                top *= mult
+                right *= mult
+                bottom *= mult
+                left *= mult
+                
+                w = right - left
+                h = bottom - top
+                
+                tracker = cv.TrackerKCF_create()
+                tracker.init(frame, (left, top, w, h))
+                
+                self.trackers[nome_exibicao] = tracker
+                caixas_desenho[nome_exibicao] = (left, top, right, bottom)
 
         # ---------------------------------------------------------
         # FASE 2: RASTREAMENTO LEVE (Nos 14 frames intermediários)
@@ -228,7 +214,7 @@ class FaceRecognition:
         else:
             nomes_perdidos = []
             
-            for nome_exibicao, tracker in self.trackers.items():
+            for nome_exibicao, tracker in list(self.trackers.items()):
                 sucesso, bbox = tracker.update(frame)
                 
                 if sucesso:
@@ -280,7 +266,7 @@ class FaceRecognition:
                     # Roda apenas a cada 10 frames para evitar travamentos
                     frames_passados = self.contador_frames - cache["ultimo_teste"]
                     
-                    if frames_passados >= 10:
+                    if frames_passados >= 1:
                         esta_vivo, msg = self.liveness.avaliar_frame(
                             frame, 
                             bbox_atual
@@ -316,8 +302,8 @@ class FaceRecognition:
                     
                     centro_x = int((left + right) / 2)
                     movimento = self.verificar_sentido(
-                        nome_limpo, 
-                        centro_x
+                        nome_limpo,
+                        centro_x + offset_x
                     )
                     
                     if movimento:
@@ -330,6 +316,18 @@ class FaceRecognition:
                         )
             else:
                 texto_status = "Buscando..."
+
+            faces_data.append({
+                "name": nome_exibicao,
+                "status": texto_status,
+                "color": self._bgr_to_hex(cor_caixa),
+                "box": {
+                    "top": int(top + offset_y),
+                    "right": int(right + offset_x),
+                    "bottom": int(bottom + offset_y),
+                    "left": int(left + offset_x),
+                }
+            })
 
             # --- Desenho da Interface no Vídeo ---
             cv.rectangle(
@@ -379,10 +377,16 @@ class FaceRecognition:
             2
         )
 
+        self.last_faces_data = faces_data
+
         return frame
 
+    def run_recognition_get_data(self, frame, frame_offset=(0, 0)):
+        self.run_recognition(frame, frame_offset=frame_offset)
+        return self.last_faces_data
 
-def face_conf(face_distance, face_match_threshold=0.8):
+
+def face_conf(face_distance, face_match_threshold=0.65):
     range_val = (1.0 - face_match_threshold)
     linear_val = (1.0 - face_distance) / (range_val * 2.0)
 

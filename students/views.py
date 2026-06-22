@@ -12,13 +12,12 @@ import os
 import threading
 import time
 from .forms import ClassroomForm
+import cv2 as cv
+import numpy as np
 
-# Imports pesados - comentados para migrations rodarem
 try:
     import face_recognition
-    import numpy as np
     from PIL import Image, ImageOps, ImageDraw
-    import cv2 as cv
     from .ia import FaceRecognition
     
     # Inicia a rede neural na memória UMA VEZ
@@ -35,7 +34,7 @@ latest_frame_lock = threading.Lock()
 
 
 def get_placeholder_frame_bytes():
-    import cv2
+
 
     img = np.zeros((480, 640, 3), dtype=np.uint8)
     cv.putText(
@@ -47,7 +46,7 @@ def get_placeholder_frame_bytes():
         (255, 255, 255),
         2,
     )
-    sucesso, buffer = cv2.imencode('.jpg', img)
+    sucesso, buffer = cv.imencode('.jpg', img)
     return buffer.tobytes() if sucesso else b''
 
 
@@ -102,7 +101,6 @@ def video_feed(request):
     """Retorna o stream MJPEG com o último frame processado pela IA."""
     def generate_frames():
         try:
-            import cv2
             placeholder_bytes = get_placeholder_frame_bytes()
             while True:
                 with latest_frame_lock:
@@ -141,17 +139,13 @@ def process_local_camera_frame(request):
             return JsonResponse({'error': 'Não foi possível ler a imagem enviada.'}, status=400)
 
         frame = cv.flip(frame, 1)
-        frame_processado = ia_system.run_recognition(frame)
+        faces_data = ia_system.run_recognition_get_data(frame)
 
-        sucesso, buffer = cv.imencode('.jpg', frame_processado)
-        if not sucesso:
-            return JsonResponse({'error': 'Falha ao codificar o frame processado.'}, status=500)
-
-        global latest_processed_frame
-        with latest_frame_lock:
-            latest_processed_frame = buffer.tobytes()
-
-        return JsonResponse({'ok': True})
+        return JsonResponse({
+            'ok': True,
+            'faces': faces_data,
+            'line_x': getattr(ia_system, 'LINHA_VIRTUAL_X', None)
+        })
     except Exception as e:
         return JsonResponse({'error': f'Falha ao processar frame: {e}'}, status=500)
 

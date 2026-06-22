@@ -170,8 +170,8 @@
                 <h6 class="mb-0 fw-bold text-uppercase d-flex align-items-center gap-2" style="font-size: 0.8rem; letter-spacing: 0.5px;">
                     Câmera
                     <select id="cameraMode" class="form-select form-select-sm border-0 bg-light fw-bold text-dark" style="width: auto; font-size: 0.7rem; padding: 2px 24px 2px 8px;" onchange="if(document.getElementById('camSwitch').checked) toggleCamera();">
-                    <option value="varredura">Chamada (Celular)</option>
-                    <option value="totem">Totem (Servidor)</option>
+                    <option value="varredura">Varredura (celular)</option>
+                    <option value="totem">Totem (local)</option>
                 </select>
                 </h6>
                 <div class="form-check form-switch m-0">
@@ -363,7 +363,7 @@
         }
         isProcessing = false;
 
-        if (toggle.checked) {
+            if (toggle.checked) {
             if (!classId) {
                 alert("Selecione uma turma ativa primeiro para usar a câmera.");
                 toggle.checked = false;
@@ -371,12 +371,8 @@
             }
 
             container.classList.replace('bg-light', 'bg-dark');
-            if (modeSelect.value === 'totem') {
-                const videoUrl = "{% url 'video_feed' %}"; 
-                container.innerHTML = `<img src="${videoUrl}" style="width: 100%; height: 200px; object-fit: cover; border-radius: inherit;">`;
-                return;
-            }
-            container.innerHTML = `
+                // Both modes use the device camera now. UI is the same; constraints differ by mode.
+                container.innerHTML = `
                 <video id="live-video" autoplay playsinline style="width: 100%; height: 200px; object-fit: cover;"></video>
                 <canvas id="hidden-canvas" style="display: none;"></canvas>
                 <div id="cam-feedback" class="position-absolute top-0 end-0 m-2 badge bg-success shadow-sm" style="display:none; font-size: 0.75rem;"></div>
@@ -388,19 +384,29 @@
             const feedback = document.getElementById('cam-feedback');
 
             try {
-                videoStream = await navigator.mediaDevices.getUserMedia({
-                    video: { facingMode: "environment" }
-                });
+                // choose constraints per mode
+                let constraints = { video: { facingMode: "environment" } };
+                if (modeSelect.value === 'totem') {
+                    // Totem (local device) prefers user-facing camera and higher resolution
+                    constraints = { video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } } };
+                } else {
+                    // Varredura (mobile): prefer environment/back camera
+                    constraints = { video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } } };
+                }
+
+                videoStream = await navigator.mediaDevices.getUserMedia(constraints);
                 video.srcObject = videoStream;
 
+                // set processing frequency depending on mode
+                const intervalMs = modeSelect.value === 'totem' ? 200 : 400;
                 processInterval = setInterval(() => {
                     if (video.readyState === video.HAVE_ENOUGH_DATA && !isProcessing) {
                         isProcessing = true; 
 
                         const maxSize = 640;
                         const scale = Math.min(maxSize / video.videoWidth, maxSize / video.videoHeight);
-                        canvas.width = video.videoWidth * scale;
-                        canvas.height = video.videoHeight * scale;
+                        canvas.width = Math.round(video.videoWidth * scale);
+                        canvas.height = Math.round(video.videoHeight * scale);
                         
                         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
                         const imageData = canvas.toDataURL('image/jpeg', 0.6);
@@ -430,7 +436,7 @@
                         .catch(err => console.error("Erro na rede:", err))
                         .finally(() => { isProcessing = false; });
                     }
-                }, 400);
+                }, intervalMs);
 
             } catch (err) {
                 alert("Erro ao acessar a câmera do aparelho.");

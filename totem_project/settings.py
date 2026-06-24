@@ -32,6 +32,7 @@ ALLOWED_HOSTS = ["*"]
 # Application definition
 
 INSTALLED_APPS = [
+    'daphne',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -41,6 +42,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'core',
     'students',
+    'channels',
 ]
 
 MIDDLEWARE = [
@@ -126,3 +128,5 @@ MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 # Redirecionamentos do Sistema de Autenticação
 LOGIN_REDIRECT_URL = '/'
 LOGOUT_REDIRECT_URL = '/accounts/login/'
+
+ASGI_APPLICATION = 'totem_project.asgi.application'

@@ -274,51 +274,6 @@ def update_student_photo(request, student_id):
 
     return render(request, 'students/update_photo.html', {'student': student})
 
-
-CACHE_BIOMETRIA = {}
-CACHE_LIVENESS_VIEW = {}
-
-def registrar_ponto(student, classroom, modo):
-    """
-    Máquina de Estados de Presença com Fuso Horário (Brasil) Corrigido.
-    """
-    agora = timezone.localtime(timezone.now())
-    cooldown = agora - timedelta(minutes=2)
-    
-    ultimo_registro = Attendance.objects.filter(
-        student=student,
-        classroom=classroom,
-        timestamp__date=agora.date()
-    ).order_by('-timestamp').first()
-
-    # Bloqueio anti-spam (ignora se leu a mesma pessoa nos últimos 2 minutos)
-    if ultimo_registro and ultimo_registro.timestamp > cooldown:
-        return False # Não registrou nada novo
-
-    if modo == 'varredura':
-        # Na Chamada Panorâmica, só damos ENTRADA.
-        if not ultimo_registro or ultimo_registro.direction != 'ENTRADA':
-            Attendance.objects.create(
-                student=student,
-                classroom=classroom,
-                direction='ENTRADA',
-                liveness_score=1.0
-            )
-            return True
-            
-    elif modo == 'totem':
-        # No Totem fixo, intercala entre Entrada e Saída
-        nova_direcao = 'SAIDA' if (ultimo_registro and ultimo_registro.direction == 'ENTRADA') else 'ENTRADA'
-        Attendance.objects.create(
-            student=student,
-            classroom=classroom,
-            direction=nova_direcao,
-            liveness_score=1.0
-        )
-        return True
-        
-    return False
-
 @csrf_exempt
 def processar_frame_camera(request):
     if request.method == 'POST':
@@ -339,6 +294,7 @@ def processar_frame_camera(request):
 
         if image_data:
             try:
+                # Decodifica a imagem base64 vinda do navegador
                 format, imgstr = image_data.split(';base64,')
                 img_bytes = base64.b64decode(imgstr)
                 np_arr = np.frombuffer(img_bytes, np.uint8)
@@ -347,132 +303,32 @@ def processar_frame_camera(request):
                 if frame is None:
                     raise ValueError("Falha na decodificação da imagem.")
 
-                # Reduz o tamanho da imagem pela metade 
-                small_frame = cv2.resize(frame, (0, 0), fx=0.5, fy=0.5)
-                rgb_small_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
-
-                face_locations = face_recognition.face_locations(rgb_small_frame)
-                face_encodings = face_recognition.face_encodings(rgb_small_frame, face_locations)
-
-                rostos_reconhecidos = []
-                houve_mudanca = False # Flag para avisar a tela se deve atualizar a tabela
-                faces_out = []
-
-                if face_encodings:
-                    # Carrega do Cache em vez de consultar o banco de dados toda hora
-                    if class_id not in CACHE_BIOMETRIA:
-                        alunos = classroom.enrolled_students.all()
-                        known_enc = []
-                        known_ids = []
-                        for aluno in alunos:
-                            if aluno.face_encoding:
-                                enc_list = json.loads(aluno.face_encoding) if isinstance(aluno.face_encoding, str) else aluno.face_encoding
-                                if isinstance(enc_list, list) and len(enc_list) == 128:
-                                    known_enc.append(np.array(enc_list))
-                                    known_ids.append(aluno)
-                        CACHE_BIOMETRIA[class_id] = (known_enc, known_ids)
+                # Verifica se o sistema de IA global está rodando
+                if 'ia_system' in globals() and ia_system is not None:
                     
-                    known_encodings, known_students = CACHE_BIOMETRIA[class_id]
+                    # Força a linha virtual a ficar exatamente no meio da imagem recebida
+                    ia_system.LINHA_VIRTUAL_X = frame.shape[1] // 2
+                    
+                    # --- A CORREÇÃO ESTÁ AQUI: Pegando as 2 variáveis ---
+                    faces_out, deve_atualizar_tela = ia_system.run_recognition_get_data(frame)
+                    
+                    # Pega apenas os nomes de quem foi reconhecido e aprovado no Liveness
+                    rostos_reconhecidos = [f['name'].split(" ")[0] for f in faces_out if "Unknown" not in f['name'] and f['color'] == '#00FF00']
 
-                    if known_encodings:
-                        for (top, right, bottom, left), face_encoding in zip(face_locations, face_encodings):
-                            box = {
-                                'top': int(top),
-                                'right': int(right),
-                                'bottom': int(bottom),
-                                'left': int(left),
-                            }
-
-                            face_distances = face_recognition.face_distance(known_encodings, face_encoding)
-                            matches = face_recognition.compare_faces(known_encodings, face_encoding, tolerance=0.55)
-
-                            name = 'Unknown'
-                            student = None
-                            
-                            # 1. Identifica quem é a pessoa
-                            if len(face_distances) > 0:
-                                best_match_index = int(np.argmin(face_distances))
-                                if matches[best_match_index]:
-                                    student = known_students[best_match_index]
-                                    name = student.user.get_full_name()
-
-                            status = 'N/D'
-                            color = '#FFCC00'
-                            esta_vivo_final = False
-
-                            # 2. Lógica de Liveness com Cache
-                            if name != 'Unknown':
-                                # Cria o perfil da pessoa no cache se não existir
-                                if name not in CACHE_LIVENESS_VIEW:
-                                    CACHE_LIVENESS_VIEW[name] = {
-                                        "aprovado": False,
-                                        "sucessos": 0
-                                    }
-                                
-                                cache_pessoa = CACHE_LIVENESS_VIEW[name]
-
-                                # Se já foi aprovada antes, não precisa gastar GPU de novo
-                                if cache_pessoa["aprovado"]:
-                                    esta_vivo_final = True
-                                    status = "Aprovado (Vivo)"
-                                    color = '#00FF00'
-                                else:
-                                    # Executa a IA de Liveness pois ainda não atingiu a meta
-                                    try:
-                                        if 'ia_system' in globals() and ia_system is not None and hasattr(ia_system, 'liveness'):
-                                            # Redimensiona a caixa de volta para o frame original
-                                            scale = frame.shape[1] / float(rgb_small_frame.shape[1])
-                                            left_o = int(left * scale)
-                                            top_o = int(top * scale)
-                                            right_o = int(right * scale)
-                                            bottom_o = int(bottom * scale)
-                                            
-                                            esta_vivo, msg = ia_system.liveness.avaliar_frame(frame, (left_o, top_o, right_o, bottom_o))
-                                            
-                                            if esta_vivo:
-                                                cache_pessoa["sucessos"] += 1
-                                                status = f"Analisando: {cache_pessoa['sucessos']}/5"
-                                                color = '#FFCC00' # Laranja/Amarelo enquanto analisa
-                                                
-                                                # Só aprova se atingir 5 frames consecutivos
-                                                if cache_pessoa["sucessos"] >= 5:
-                                                    cache_pessoa["aprovado"] = True
-                                                    esta_vivo_final = True
-                                                    status = "Aprovado (Vivo)"
-                                                    color = '#00FF00'
-                                            else:
-                                                # Se a IA der negativo, zera o contador (exige 5 sucessos seguidos)
-                                                cache_pessoa["sucessos"] = 0
-                                                status = msg if msg else "FALSO"
-                                                color = '#FF0000'
-                                    except Exception as e:
-                                        status = "Erro Liveness"
-                                        color = '#FF0000'
-
-                                # 3. REGISTRO DE PONTO (Agora protegido pelo Liveness)
-                                # Só registra a presença se a pessoa passou no teste de liveness!
-                                if esta_vivo_final and student:
-                                    if registrar_ponto(student, classroom, modo_operacao):
-                                        houve_mudanca = True
-                                    
-                                    rostos_reconhecidos.append(name)
-
-                            faces_out.append({
-                                'name': name,
-                                'status': status,
-                                'color': color,
-                                'box': box
-                            })
-
-                return JsonResponse({
-                    "status": "sucesso", 
-                    "rostos_processados": len(face_locations),
-                    "reconhecidos": rostos_reconhecidos,
-                    "atualizar_tela": houve_mudanca, # Manda o sinal pro Javascript atualizar os números
-                    "faces": faces_out,
-                    "image_w": rgb_small_frame.shape[1],
-                    "image_h": rgb_small_frame.shape[0]
-                })
+                    return JsonResponse({
+                        "status": "sucesso", 
+                        "rostos_processados": len(faces_out),
+                        "reconhecidos": rostos_reconhecidos,
+                        
+                        # --- APLICANDO A BANDEIRA DE ATUALIZAÇÃO ---
+                        "atualizar_tela": deve_atualizar_tela, 
+                        
+                        "faces": faces_out,
+                        "image_w": frame.shape[1],
+                        "image_h": frame.shape[0]
+                    })
+                else:
+                    return JsonResponse({"status": "erro", "mensagem": "Sistema de IA não carregado."}, status=500)
 
             except Exception as e:
                 print(f"ERRO NA IA: {str(e)}")

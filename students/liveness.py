@@ -59,7 +59,7 @@ class AISpoofManager:
         # --- NOVO: BLOQUEIO DE DISTANCIA (FOTO PEQUENA) ---
         # Impede que o modelo avalie rostos muito pequenos (longe)
         # Ajuste este valor dependendo da resolucao da sua camera
-        TAMANHO_MINIMO = 60 
+        TAMANHO_MINIMO = 30
         
         if largura < TAMANHO_MINIMO or altura < TAMANHO_MINIMO:
             return False, "APROXIME-SE DA CAMERA"

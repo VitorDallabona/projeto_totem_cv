@@ -361,6 +361,10 @@
             clearInterval(processInterval);
             processInterval = null;
         }
+        if (window.currentSocket) {
+            window.currentSocket.close();
+            window.currentSocket = null;
+        }
         isProcessing = false;
 
             if (toggle.checked) {
@@ -397,69 +401,90 @@
             const feedback = document.getElementById('cam-feedback');
 
             try {
-                // choose constraints per mode
                 let constraints = { video: { facingMode: "environment" } };
                 if (modeSelect.value === 'totem') {
-                    // Totem (local device) prefers user-facing camera and higher resolution
                     constraints = { video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } } };
                 } else {
-                    // Varredura (mobile): prefer environment/back camera
                     constraints = { video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } } };
                 }
 
                 videoStream = await navigator.mediaDevices.getUserMedia(constraints);
                 video.srcObject = videoStream;
 
-                // set processing frequency depending on mode
-                const intervalMs = modeSelect.value === 'totem' ? 200 : 400;
-                processInterval = setInterval(() => {
-                    if (video.readyState === video.HAVE_ENOUGH_DATA && !isProcessing) {
-                        isProcessing = true; 
+                // --- INÍCIO DA LÓGICA DO WEBSOCKET ---
+                const wsProtocol = window.location.protocol === "https:" ? "wss://" : "ws://";
+                const wsUrl = wsProtocol + window.location.host + "/ws/camera/";
+                const socket = new WebSocket(wsUrl);
 
-                        const maxSize = 640;
+                // Função que extrai a foto e manda pro servidor
+                function sendFrame() {
+                    if (!isProcessing && video.readyState === video.HAVE_ENOUGH_DATA && socket.readyState === WebSocket.OPEN) {
+                        isProcessing = true;
+                        
+                        // Resolução e compressão otimizadas
+                        const maxSize = 480; 
                         const scale = Math.min(maxSize / video.videoWidth, maxSize / video.videoHeight);
                         canvas.width = Math.round(video.videoWidth * scale);
                         canvas.height = Math.round(video.videoHeight * scale);
                         
                         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                        const imageData = canvas.toDataURL('image/jpeg', 0.6);
+                        const imageData = canvas.toDataURL('image/jpeg', 0.4);
 
-                        const formData = new FormData();
-                        formData.append('image', imageData);
-                        formData.append('modo', modeSelect.value);
-                        formData.append('class_id', classId);
-                        formData.append('csrfmiddlewaretoken', document.querySelector('[name=csrfmiddlewaretoken]').value);
-
-                        fetch("{% url 'process_frame' %}", {
-                            method: 'POST',
-                            body: formData
-                        })
-                        .then(res => res.json())
-                        .then(data => {
-                            if (data.status === "sucesso") {
-                                if (Array.isArray(data.faces) && data.faces.length > 0) {
-                                    // draw boxes scaled to overlay
-                                    drawFacesOnOverlay(data.faces, data.image_w, data.image_h);
-                                } else {
-                                    // clear overlay if no faces
-                                    overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
-                                }
-
-                                if (data.reconhecidos && data.reconhecidos.length > 0) {
-                                    feedback.style.display = 'block';
-                                    feedback.innerText = `✔️ ${data.reconhecidos[0]}`;
-                                    setTimeout(() => feedback.style.display = 'none', 1500);
-                                }
-
-                                if (data.atualizar_tela) {
-                                    atualizarDashboardSilenciosamente();
-                                }
-                            }
-                        })
-                        .catch(err => console.error("Erro na rede:", err))
-                        .finally(() => { isProcessing = false; });
+                        // Envia o JSON direto pelo socket (super rápido)
+                        socket.send(JSON.stringify({
+                            image: imageData,
+                            modo: modeSelect.value,
+                            class_id: classId
+                        }));
                     }
-                }, intervalMs);
+                }
+
+                // Quando o Socket abrir, dá o "saque" inicial do Ping-Pong
+                socket.onopen = () => {
+                    console.log("WebSocket Conectado!");
+                    // Espera a câmera aquecer 1 segundinho e começa
+                    setTimeout(sendFrame, 1000); 
+                };
+
+                // Quando a resposta volta do servidor
+                socket.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+                    
+                    if (data.status === "sucesso") {
+                        if (Array.isArray(data.faces) && data.faces.length > 0) {
+                            drawFacesOnOverlay(data.faces, data.image_w, data.image_h);
+                        } else {
+                            overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+                        }
+
+                        if (data.reconhecidos && data.reconhecidos.length > 0) {
+                            feedback.style.display = 'block';
+                            feedback.innerText = `✔️ ${data.reconhecidos[0]}`;
+                            setTimeout(() => feedback.style.display = 'none', 1500);
+                        }
+
+                        if (data.atualizar_tela) {
+                            atualizarDashboardSilenciosamente();
+                        }
+                    }
+
+                    // PING-PONG: Servidor devolveu? Libera a trava e pede o próximo frame imediatamente!
+                    isProcessing = false;
+                    requestAnimationFrame(sendFrame); // Função nativa do navegador para sincronizar visualmente
+                };
+
+                socket.onerror = (error) => {
+                    console.error("Erro no WebSocket:", error);
+                    isProcessing = false;
+                };
+
+                socket.onclose = () => {
+                    console.log("WebSocket Desconectado.");
+                    isProcessing = false;
+                };
+
+                // Guarda o socket numa variável global para fechar quando desligar a câmera
+                window.currentSocket = socket;
 
             } catch (err) {
                 alert("Erro ao acessar a câmera do aparelho.");

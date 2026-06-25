@@ -279,36 +279,42 @@ async def webrtc_offer(request):
         @pc.on("track")
         def on_track(track):
             if track.kind == "video":
-                print("📹 Vídeo nativo recebido! Iniciando extração de frames...")
+                print("📹 Vídeo nativo recebido! Extraindo frames em tempo real...")
                 
-                # O "Buraco Negro": puxa os frames da câmera sem parar
-                async def processar_frames():
-                    frame_count = 0
-                    while True:
+                latest_frame = None
+                correndo = True  # Flag de controle para matar os loops imediatamente
+
+                # 1. O LEITOR: Para assim que a câmara desliga
+                async def leitor_continuo():
+                    nonlocal latest_frame, correndo
+                    while correndo:
                         try:
-                            # Sugando o frame do tubo do WebRTC
-                            frame = await track.recv()
-                            
-                            # FLAG DE CONTROLE: Verifica se a IA está ocupada
-                            # Se o frame_count estiver processando, não incrementa
-                            # Aqui, processamos apenas se o frame for "novo" o suficiente
-                            frame_count += 1
-                            
-                            # Processa 1 a cada 3 frames, mas com verificação de ocupação
-                            if frame_count % 3 == 0:
-                                # Converte pro formato OpenCV
-                                img = frame.to_ndarray(format="bgr24")
+                            latest_frame = await track.recv()
+                        except Exception:
+                            correndo = False
+                            break
+
+                # 2. A IA: Para imediatamente se o WebRTC fechar ou falhar
+                async def processador_ia():
+                    nonlocal latest_frame, correndo
+                    while correndo:
+                        try:
+                            if pc.connectionState in ["failed", "closed"]:
+                                correndo = False
+                                break
+
+                            if latest_frame is not None:
+                                frame_para_processar = latest_frame
+                                latest_frame = None 
+                                
+                                img = frame_para_processar.to_ndarray(format="bgr24")
                                 
                                 if ia_system is not None:
                                     ia_system.LINHA_VIRTUAL_X = img.shape[1] // 2
-                                    
-                                    # A MÁGICA: Joga a IA para Thread segura
-                                    # O 'await' aqui é crucial: ele espera a IA terminar 
-                                    # antes de pegar o próximo frame, eliminando o acúmulo!
                                     resultado = await sync_to_async(ia_system.run_recognition_get_data)(img)
                                     faces_out, deve_atualizar_tela = resultado
 
-                                    channel = dc_ref["channel"]
+                                    channel = dc_ref.get("channel")
                                     if channel and channel.readyState == "open":
                                         resposta = {
                                             "status": "sucesso",
@@ -318,13 +324,16 @@ async def webrtc_offer(request):
                                             "atualizar_tela": deve_atualizar_tela
                                         }
                                         channel.send(json.dumps(resposta))
-                                    
+                            else:
+                                await asyncio.sleep(0.02)
                         except Exception as e:
-                            print(f"🛑 Transmissão de vídeo encerrada ou erro: {e}")
+                            print(f"Erro no loop da IA: {e}")
+                            correndo = False
                             break
 
-                # Inicia essa tarefa em segundo plano rodando em loop infinito
-                asyncio.create_task(processar_frames())
+                # Inicia as duas tarefas em segundo plano
+                asyncio.create_task(leitor_continuo())
+                asyncio.create_task(processador_ia())
 
         @pc.on("connectionstatechange")
         async def on_connectionstatechange():

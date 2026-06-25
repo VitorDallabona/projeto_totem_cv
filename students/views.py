@@ -212,7 +212,9 @@ def update_student_photo(request, student_id):
             img_array = np.array(img)
             
             # Validação rápida de rosto
-            encodings = face_recognition.face_encodings(img_array)
+            faces = face_app.get(img_array)
+
+            embedding = faces[0].embedding
             
             if encodings:
                 matricula = student.user.username

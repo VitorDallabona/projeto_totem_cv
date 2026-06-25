@@ -340,10 +340,20 @@
         }
     });
 
-    // Streaming do Servidor vs AJAX Polling do Celular
+    // --- VARIÁVEIS DO SISTEMA E ANIMAÇÃO ---
     let videoStream = null;
-    let processInterval = null;
     let isProcessing = false;
+    let animationId = null;
+    
+    // Variáveis da Interpolação (LERP)
+    let activeFaces = {}; 
+    let lastImageW = 640;
+    let lastImageH = 480;
+
+    // Função matemática de Interpolação Linear
+    function lerp(start, end, amt) {
+        return (1 - amt) * start + amt * end;
+    }
 
     async function toggleCamera() {
         const container = document.getElementById('camera-container');
@@ -353,21 +363,23 @@
         const classSelect = document.querySelector('select[name="class_id"]');
         const classId = classSelect ? classSelect.value : null;
 
+        // Limpeza Total ao desligar
         if (videoStream) {
             videoStream.getTracks().forEach(track => track.stop());
             videoStream = null;
-        }
-        if (processInterval) {
-            clearInterval(processInterval);
-            processInterval = null;
         }
         if (window.currentSocket) {
             window.currentSocket.close();
             window.currentSocket = null;
         }
+        if (animationId) {
+            cancelAnimationFrame(animationId);
+            animationId = null;
+        }
         isProcessing = false;
+        activeFaces = {}; // Limpa os rostos da memória
 
-            if (toggle.checked) {
+        if (toggle.checked) {
             if (!classId) {
                 alert("Selecione uma turma ativa primeiro para usar a câmera.");
                 toggle.checked = false;
@@ -375,21 +387,20 @@
             }
 
             container.classList.replace('bg-light', 'bg-dark');
-                // Both modes use the device camera now. UI is the same; constraints differ by mode.
-                                container.innerHTML = `
-                                <div style="position: relative; width: 100%; height: 200px; overflow: hidden;">
-                                    <video id="live-video" autoplay playsinline style="width: 100%; height: 100%; object-fit: cover;"></video>
-                                    <canvas id="cam-overlay" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none;"></canvas>
-                                </div>
-                                <canvas id="hidden-canvas" style="display: none;"></canvas>
-                                <div id="cam-feedback" class="position-absolute top-0 end-0 m-2 badge bg-success shadow-sm" style="display:none; font-size: 0.75rem;"></div>
-                                `;
+            container.innerHTML = `
+            <div style="position: relative; width: 100%; height: 200px; overflow: hidden;">
+                <video id="live-video" autoplay playsinline style="width: 100%; height: 100%; object-fit: cover;"></video>
+                <canvas id="cam-overlay" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none;"></canvas>
+            </div>
+            <canvas id="hidden-canvas" style="display: none;"></canvas>
+            <div id="cam-feedback" class="position-absolute top-0 end-0 m-2 badge bg-success shadow-sm" style="display:none; font-size: 0.75rem;"></div>
+            `;
 
             const video = document.getElementById('live-video');
             const canvas = document.getElementById('hidden-canvas');
             const ctx = canvas.getContext('2d');
             const overlay = document.getElementById('cam-overlay');
-            const overlayCtx = overlay.getContext('2d');
+            const feedback = document.getElementById('cam-feedback');
 
             function syncOverlaySize() {
                 overlay.width = overlay.clientWidth;
@@ -398,7 +409,6 @@
             window.addEventListener('resize', syncOverlaySize);
             video.addEventListener('loadedmetadata', syncOverlaySize);
             syncOverlaySize();
-            const feedback = document.getElementById('cam-feedback');
 
             try {
                 let constraints = { video: { facingMode: "environment" } };
@@ -411,52 +421,107 @@
                 videoStream = await navigator.mediaDevices.getUserMedia(constraints);
                 video.srcObject = videoStream;
 
-                // --- INÍCIO DA LÓGICA DO WEBSOCKET ---
+                // Inicia o motor gráfico a 60 FPS
+                animationId = requestAnimationFrame(renderLoop);
+
+                // --- LÓGICA DO WEBSOCKET ---
                 const wsProtocol = window.location.protocol === "https:" ? "wss://" : "ws://";
                 const wsUrl = wsProtocol + window.location.host + "/ws/camera/";
                 const socket = new WebSocket(wsUrl);
 
-                // Função que extrai a foto e manda pro servidor
+                // Quando o Socket abrir, manda a configuração e começa
+                socket.onopen = () => {
+                    console.log("WebSocket Conectado! Enviando Configuração...");
+                    
+                    // 1. Envia a configuração da turma em texto (JSON)
+                    socket.send(JSON.stringify({
+                        action: 'init',
+                        class_id: classId,
+                        modo: modeSelect.value
+                    }));
+                    
+                    // Espera meio segundo para a câmera aquecer e começa o Ping-Pong
+                    setTimeout(sendFrame, 500); 
+                };
+
+                // Função que extrai a foto e manda pro servidor EM BINÁRIO
                 function sendFrame() {
                     if (!isProcessing && video.readyState === video.HAVE_ENOUGH_DATA && socket.readyState === WebSocket.OPEN) {
                         isProcessing = true;
                         
-                        // Resolução e compressão otimizadas
                         const maxSize = 480; 
                         const scale = Math.min(maxSize / video.videoWidth, maxSize / video.videoHeight);
                         canvas.width = Math.round(video.videoWidth * scale);
                         canvas.height = Math.round(video.videoHeight * scale);
                         
                         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                        const imageData = canvas.toDataURL('image/jpeg', 0.4);
-
-                        // Envia o JSON direto pelo socket (super rápido)
-                        socket.send(JSON.stringify({
-                            image: imageData,
-                            modo: modeSelect.value,
-                            class_id: classId
-                        }));
+                        
+                        // 2. Extrai o arquivo binário puro (Blob) da imagem
+                        canvas.toBlob((blob) => {
+                            if (blob) {
+                                // Manda os bytes brutos diretamente pela rede
+                                socket.send(blob);
+                            } else {
+                                isProcessing = false;
+                            }
+                        }, 'image/webp', 0.7); // WebP é muito mais leve que JPEG
                     }
                 }
 
-                // Quando o Socket abrir, dá o "saque" inicial do Ping-Pong
-                socket.onopen = () => {
-                    console.log("WebSocket Conectado!");
-                    // Espera a câmera aquecer 1 segundinho e começa
-                    setTimeout(sendFrame, 1000); 
-                };
-
-                // Quando a resposta volta do servidor
+                // --- QUANDO OS DADOS CHEGAM DO SERVIDOR ---
                 socket.onmessage = (event) => {
                     const data = JSON.parse(event.data);
                     
                     if (data.status === "sucesso") {
-                        if (Array.isArray(data.faces) && data.faces.length > 0) {
-                            drawFacesOnOverlay(data.faces, data.image_w, data.image_h);
-                        } else {
-                            overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+                        // Atualiza as resoluções base do servidor
+                        lastImageW = data.image_w || lastImageW;
+                        lastImageH = data.image_h || lastImageH;
+                        
+                        const agora = Date.now();
+
+                        // Em vez de desenhar, nós apenas atualizamos os "Alvos" (Target)
+                        if (Array.isArray(data.faces)) {
+                            // Cria uma lista de quem está presente NESTE milissegundo
+                            const idsNesteFrame = new Set();
+                            
+                            data.faces.forEach(f => {
+                                if (!f.box) return;
+                                
+                                // Corta a porcentagem fora para gerar uma ID única (Ex: "João" ou "Unknown 1")
+                                const id = f.name ? f.name.split(" (")[0].trim() : 'Desconhecido';
+                                idsNesteFrame.add(id);
+                                
+                                if (!activeFaces[id]) {
+                                    // Rosto novo: Cria sem animação inicial
+                                    activeFaces[id] = {
+                                        currentBox: { ...f.box },
+                                        targetBox: { ...f.box },
+                                        color: f.color,
+                                        status: f.status,
+                                        name: f.name, // Guarda com a porcentagem para aparecer na tela
+                                        lastUpdate: agora
+                                    };
+                                } else {
+                                    // Rosto existente: Atualiza o destino e as cores
+                                    activeFaces[id].targetBox = { ...f.box };
+                                    activeFaces[id].color = f.color;
+                                    activeFaces[id].status = f.status;
+                                    activeFaces[id].name = f.name; 
+                                    activeFaces[id].lastUpdate = agora;
+                                }
+                            });
+
+                            // O SEGREDO CONTRA OS FANTASMAS:
+                            // Varre todos os rostos que estavam na tela. Se ele não foi enviado pelo 
+                            // servidor neste exato frame, DELETA INSTANTANEAMENTE!
+                            for (const oldId in activeFaces) {
+                                if (!idsNesteFrame.has(oldId)) {
+                                    delete activeFaces[oldId];
+                                }
+                            }
                         }
 
+                        // Lógica de Sucesso e Atualização de Tela
                         if (data.reconhecidos && data.reconhecidos.length > 0) {
                             feedback.style.display = 'block';
                             feedback.innerText = `✔️ ${data.reconhecidos[0]}`;
@@ -468,22 +533,13 @@
                         }
                     }
 
-                    // PING-PONG: Servidor devolveu? Libera a trava e pede o próximo frame imediatamente!
                     isProcessing = false;
-                    requestAnimationFrame(sendFrame); // Função nativa do navegador para sincronizar visualmente
+                    // Manda a próxima foto assim que possível
+                    requestAnimationFrame(sendFrame); 
                 };
 
-                socket.onerror = (error) => {
-                    console.error("Erro no WebSocket:", error);
-                    isProcessing = false;
-                };
-
-                socket.onclose = () => {
-                    console.log("WebSocket Desconectado.");
-                    isProcessing = false;
-                };
-
-                // Guarda o socket numa variável global para fechar quando desligar a câmera
+                socket.onerror = (error) => { console.error("Erro WS:", error); isProcessing = false; };
+                socket.onclose = () => { console.log("WS Desconectado."); isProcessing = false; };
                 window.currentSocket = socket;
 
             } catch (err) {
@@ -492,59 +548,82 @@
                 container.innerHTML = `<span class="text-muted small fw-medium text-uppercase tracking-wider">Câmera Desativada</span>`;
                 container.classList.replace('bg-dark', 'bg-light');
             }
-            
         } else {
             container.innerHTML = `<span class="text-muted small fw-medium text-uppercase tracking-wider">Câmera Desativada</span>`;
             container.classList.replace('bg-dark', 'bg-light');
         }
     }
 
-    function drawFacesOnOverlay(faces, imageW, imageH) {
+    // --- MOTOR DE ANIMAÇÃO A 60 FPS (Substitui o antigo drawFacesOnOverlay) ---
+    function renderLoop() {
+        // Mantém o loop rodando a 60 vezes por segundo
+        animationId = requestAnimationFrame(renderLoop);
+
         const overlay = document.getElementById('cam-overlay');
         if (!overlay) return;
         const ctx = overlay.getContext('2d');
 
-        // Limpa o frame anterior
+        // Limpa o canvas
         ctx.clearRect(0, 0, overlay.width, overlay.height);
 
-        if (!imageW || !imageH) return;
+        // 1. Desenha a Linha Virtual Fixa (Catraca)
+        ctx.beginPath();
+        ctx.moveTo(overlay.width / 2, 0);
+        ctx.lineTo(overlay.width / 2, overlay.height);
+        ctx.strokeStyle = 'rgba(255, 0, 0, 0.7)';
+        ctx.lineWidth = 2;
+        ctx.stroke();
 
-        // Matemática para mapear as coordenadas quando se usa "object-fit: cover"
-        const videoRatio = imageW / imageH;
+        // 2. Matemática do Objeto Cover
+        const videoRatio = lastImageW / lastImageH;
         const overlayRatio = overlay.width / overlay.height;
         
         let drawWidth = overlay.width;
         let drawHeight = overlay.height;
-        let offsetX = 0;
-        let offsetY = 0;
+        let offsetX = 0; let offsetY = 0;
 
         if (videoRatio > overlayRatio) {
-            // O vídeo original é mais "largo" que a tela, então as laterais estão cortadas (cover)
             drawHeight = overlay.height;
             drawWidth = overlay.height * videoRatio;
             offsetX = (overlay.width - drawWidth) / 2;
         } else {
-            // O vídeo original é mais "alto" que a tela, então o topo/fundo estão cortados (cover)
             drawWidth = overlay.width;
             drawHeight = overlay.width / videoRatio;
             offsetY = (overlay.height - drawHeight) / 2;
         }
 
-        const scaleX = drawWidth / imageW;
-        const scaleY = drawHeight / imageH;
+        const scaleX = drawWidth / lastImageW;
+        const scaleY = drawHeight / lastImageH;
 
-        faces.forEach(f => {
-            if (!f.box) return;
-            
-            // Aplica as proporções com os offsets calculados
-            const left = (f.box.left * scaleX) + offsetX;
-            const top = (f.box.top * scaleY) + offsetY;
-            const right = (f.box.right * scaleX) + offsetX;
-            const bottom = (f.box.bottom * scaleY) + offsetY;
-            
+        const agora = Date.now();
+        // A velocidade do deslize (0.1 é macio, 0.5 é rígido)
+        const lerpSpeed = 0.35; 
+
+        // 3. Desenha cada rosto
+        for (const id in activeFaces) {
+            const f = activeFaces[id];
+
+            // Limpa o rosto da tela se o servidor não o enviar por 800 milissegundos
+            if (agora - f.lastUpdate > 800) {
+                delete activeFaces[id];
+                continue;
+            }
+
+            // APLICAÇÃO DA INTERPOLAÇÃO (Fazendo o quadrado deslizar)
+            f.currentBox.left = lerp(f.currentBox.left, f.targetBox.left, lerpSpeed);
+            f.currentBox.top = lerp(f.currentBox.top, f.targetBox.top, lerpSpeed);
+            f.currentBox.right = lerp(f.currentBox.right, f.targetBox.right, lerpSpeed);
+            f.currentBox.bottom = lerp(f.currentBox.bottom, f.targetBox.bottom, lerpSpeed);
+
+            // Calcula o tamanho da caixa
+            const left = (f.currentBox.left * scaleX) + offsetX;
+            const top = (f.currentBox.top * scaleY) + offsetY;
+            const right = (f.currentBox.right * scaleX) + offsetX;
+            const bottom = (f.currentBox.bottom * scaleY) + offsetY;
             const w = right - left;
             const h = bottom - top;
 
+            // Cores e Estilos
             const color = f.color || '#00FF00';
             ctx.strokeStyle = color;
             ctx.lineWidth = Math.max(2, Math.round(Math.min(overlay.width, overlay.height) * 0.003));
@@ -562,7 +641,7 @@
             ctx.fillRect(labelX, labelY, textW + pad * 2, Math.round(overlay.height * 0.06));
             ctx.fillStyle = '#fff';
             ctx.fillText(label, labelX + pad, labelY + Math.round(overlay.height * 0.045));
-        });
+        }
     }
 
     function atualizarDashboardSilenciosamente() {

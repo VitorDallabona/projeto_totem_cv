@@ -122,13 +122,13 @@ class FaceRecognition:
                 nome_exibicao = "Buscando..."
                 
                 if len(self.knownFaceEncodings) > 0:
-                    matches = face_recognition.compare_faces(self.knownFaceEncodings, face_encoding, tolerance=0.60)
+                    matches = face_recognition.compare_faces(self.knownFaceEncodings, face_encoding, tolerance=0.55)
                     face_distances = face_recognition.face_distance(self.knownFaceEncodings, face_encoding)
                     matchIndex = np.argmin(face_distances)
 
                     if matches[matchIndex]:
                         nome = self.knownFaceNames[matchIndex]
-                        confianca = face_conf(face_distances[matchIndex], 0.65)
+                        confianca = face_conf(face_distances[matchIndex], 0.55)
                         nome_exibicao = f'{nome} ({confianca})'
                     else:
                         contador_desconhecidos += 1
@@ -141,7 +141,7 @@ class FaceRecognition:
                 top *= mult; right *= mult; bottom *= mult; left *= mult
                 w = right - left; h = bottom - top
                 
-                tracker = cv.TrackerKCF_create()
+                tracker = cv.TrackerCSRT_create()
                 tracker.init(frame, (left, top, w, h))
                 
                 self.trackers[nome_exibicao] = tracker
@@ -159,9 +159,6 @@ class FaceRecognition:
                     
             for nome_exibicao in nomes_perdidos:
                 del self.trackers[nome_exibicao]
-                nome_limpo = nome_exibicao.split(" ")[0]
-                if nome_limpo in self.liveness_cache:
-                    del self.liveness_cache[nome_limpo]
 
         # ---------------------------------------------------------
         # FASE 3: LÓGICA DE LIVENESS (SILENT)
@@ -242,7 +239,7 @@ class FaceRecognition:
         # Devolve as 2 informações corretamente para o views.py
         return self.last_faces_data, self.teve_mudanca_banco
 
-def face_conf(face_distance, face_match_threshold=0.65):
+def face_conf(face_distance, face_match_threshold=0.75):
     range_val = (1.0 - face_match_threshold)
     linear_val = (1.0 - face_distance) / (range_val * 2.0)
     if face_distance > face_match_threshold:

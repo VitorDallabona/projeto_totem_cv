@@ -61,9 +61,16 @@ class FaceRecognition:
         
         self.trackers = {} 
         self.contador_frames = 0
-        self.FRAMES_ATUALIZACAO = 5 
         self.FATOR_ESCALA = 1
         self.last_faces_data = [] 
+        
+        # --- OTIMIZAÇÃO VARIÁVEL DO LIVENESS ---
+        self.FRAMES_ATUALIZACAO = 5
+        
+        # O Liveness agora roda proporcionalmente à IA de reconhecimento.
+        # Exemplo: 15 // 3 = Roda a cada 5 frames. É dinâmico!
+        self.INTERVALO_LIVENESS = max(1, self.FRAMES_ATUALIZACAO // 3)
+        # ---------------------------------------
         
         # A BANDEIRA DE ATUALIZAÇÃO DO BANCO
         self.teve_mudanca_banco = False
@@ -112,7 +119,7 @@ class FaceRecognition:
             small_frame = cv.resize(frame, (0,0), fx=self.FATOR_ESCALA, fy=self.FATOR_ESCALA)
             rgb_small_frame = cv.cvtColor(small_frame, cv.COLOR_BGR2RGB)        
 
-            face_locations = face_recognition.face_locations(rgb_small_frame, model="cnn")
+            face_locations = face_recognition.face_locations(rgb_small_frame, model="SCRFD")
             face_encodings = face_recognition.face_encodings(rgb_small_frame, face_locations)
 
             contador_desconhecidos = 0
@@ -166,6 +173,19 @@ class FaceRecognition:
         TESTES_NECESSARIOS = 4
         
         for nome_exibicao, (left, top, right, bottom) in caixas_desenho.items():
+            
+            # === TRAVA DE SEGURANÇA (CLIPPING) ===
+            # Impede que as coordenadas vazem da tela e quebrem o OpenCV
+            left = max(0, int(left))
+            top = max(0, int(top))
+            right = min(largura_frame, int(right))
+            bottom = min(altura_frame, int(bottom))
+            
+            # Se o rosto estiver tão na borda que a caixa sumiu, ignora este frame
+            if right <= left or bottom <= top:
+                continue
+            # =====================================
+
             nome_limpo = nome_exibicao.split(" ")[0]
             cor_caixa = (0, 0, 255) 
             
@@ -181,7 +201,8 @@ class FaceRecognition:
                 if not cache["aprovado"]:
                     frames_passados = self.contador_frames - cache["ultimo_teste"]
                     
-                    if frames_passados >= 1: 
+                    # --- AQUI ESTÁ A VARIÁVEL ---
+                    if frames_passados >= self.INTERVALO_LIVENESS: 
                         esta_vivo, msg = self.liveness.avaliar_frame(frame, bbox_atual)
                         cache["ultimo_teste"] = self.contador_frames
                         
@@ -239,7 +260,7 @@ class FaceRecognition:
         # Devolve as 2 informações corretamente para o views.py
         return self.last_faces_data, self.teve_mudanca_banco
 
-def face_conf(face_distance, face_match_threshold=0.75):
+def face_conf(face_distance, face_match_threshold=0.55):
     range_val = (1.0 - face_match_threshold)
     linear_val = (1.0 - face_distance) / (range_val * 2.0)
     if face_distance > face_match_threshold:

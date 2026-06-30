@@ -1,0 +1,46 @@
+{% extends 'core/base.html' %}
+
+{% block content %}
+<div class="row justify-content-center mt-5">
+    <div class="col-md-6 col-lg-5">
+        <div class="card border-0 shadow-sm rounded-4 overflow-hidden">
+            <div class="card-header bg-white border-bottom py-3 px-4">
+                <h6 class="mb-0 fw-bold text-dark text-uppercase" style="letter-spacing: 0.5px;">Atualizar Biometria Facial</h6>
+            </div>
+            
+            <div class="card-body p-4 text-center">
+                {% if error %}
+                    <div class="alert alert-danger py-2 mb-3 small">{{ error }}</div>
+                {% endif %}
+
+                <div class="mb-3">
+                    {% if student.profile_photo %}
+                        <img src="{{ student.profile_photo.url }}" class="rounded-circle shadow-sm mb-3" style="width: 100px; height: 100px; object-fit: cover; border: 3px solid #f8f9fa;">
+                    {% else %}
+                        <div class="bg-light rounded-circle border mx-auto d-flex align-items-center justify-content-center text-secondary fw-bold shadow-sm mb-3" style="width: 100px; height: 100px; font-size: 2rem;">
+                            {{ student.user.first_name|first }}{{ student.user.last_name|first }}
+                        </div>
+                    {% endif %}
+                </div>
+                
+                <h6 class="fw-bold text-dark mb-1">{{ student.user.get_full_name }}</h6>
+                <p class="text-muted small mb-4">Envie uma foto nítida e bem iluminada para que a IA possa processar seu rosto.</p>
+                
+                <form method="post" enctype="multipart/form-data">
+                    {% csrf_token %}
+                    
+                    <div class="mb-4 text-start">
+                        <label for="new_photo" class="form-label fw-semibold text-secondary small text-uppercase" style="letter-spacing: 0.5px;">Selecione a Nova Foto</label>
+                        <input class="form-control bg-light border-0" type="file" id="new_photo" name="new_photo" accept="image/*" required>
+                    </div>
+                    
+                    <div class="d-flex gap-2 justify-content-center">
+                        <a href="javascript:history.back()" class="btn btn-light border border-secondary border-opacity-25 fw-semibold px-4 rounded-3 text-secondary w-50">Cancelar</a>
+                        <button type="submit" class="btn btn-primary fw-semibold px-4 rounded-3 shadow-sm w-50">Processar Foto</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

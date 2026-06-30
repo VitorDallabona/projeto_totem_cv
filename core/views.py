@@ -4,75 +4,191 @@ from django.http import JsonResponse
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.http import HttpResponse
 from django.db.models import Count
-import datetime
 import csv
+from django.utils import timezone
+from datetime import timedelta, datetime, date
+from django.db.models import Count, Q
+from django.urls import reverse
+from django.views.decorators.csrf import csrf_exempt
+
+import json
+import cv2
+import asyncio
+from asgiref.sync import sync_to_async
+
+# --- IMPORTS DO WEBRTC ---
+from aiortc import RTCPeerConnection, RTCSessionDescription, MediaStreamTrack
+from av import VideoFrame
+
+# Importa a sua IA global (Certifique-se de que ela está sendo iniciada em algum lugar como no apps.py)
+try:
+    from students.ia import FaceRecognition
+    # Se a IA não estiver sendo instanciada em outro lugar (ex: no apps.py), inicie-a aqui:
+    if 'ia_system' not in globals():
+        print("Carregando Modelos de IA na GPU (WebRTC)...")
+        ia_system = FaceRecognition('media/faces')
+except ImportError as e:
+    print(f"⚠️ Aviso: Dependências da IA não carregadas no views.py: {e}")
+    ia_system = None
+
 
 def is_teacher(user):
     return hasattr(user, 'profile') and user.profile.is_teacher
 
 
 @login_required
+def start_class(request, class_id):
+    if request.method == 'POST':
+        classroom = get_object_or_404(Classroom, id=class_id)
+        
+        # Garante a desativação de qualquer outra aula ativa para não confundir o totem
+        Classroom.objects.filter(active_now=True).update(active_now=False)
+        
+        # Obtém a quantidade de aulas em sequência (padrão de 2 horas)
+        num_hours = int(request.POST.get('num_hours', 2))
+        
+        # SALVA A CARGA HORÁRIA NA MEMÓRIA TEMPORÁRIA DO PROFESSOR (Sem mexer na grade fixa do banco)
+        request.session[f'class_{classroom.id}_hours'] = num_hours
+        
+        # Apenas ativa a aula (start_time e end_time permanecem intactos com o horário oficial!)
+        classroom.active_now = True
+        classroom.save()
+        
+    return redirect(f"{reverse('dashboard')}?class_id={class_id}")
+
+
+
+@login_required
+def end_class(request, class_id):
+    if request.method == 'POST':
+        classroom = get_object_or_404(Classroom, id=class_id)
+        
+        if classroom.active_now:
+            # Resgata a quantidade de horas que guardamos no início da aula (e já apaga da memória)
+            # Se por acaso o professor mudou de computador, o .pop assume 2 horas como fallback de segurança
+            horas_ministradas = request.session.pop(f'class_{classroom.id}_hours', 2)
+            
+            # Adiciona ao histórico de horas dadas na disciplina
+            classroom.hours_taught += horas_ministradas
+            
+            # Encerra a aula no totem
+            classroom.active_now = False
+            classroom.save()
+            
+    return redirect(f"{reverse('dashboard')}?class_id={class_id}")
+
+
+
+@login_required
 def teacher_dashboard(request):
-    #verifica se quem logou foi um aluno
     if hasattr(request.user, 'student_profile'):
-        # Se for aluno, redireciona para a tela de faltas dele
         return redirect('student_absences')
         
-    #Professor ou Admin ->carrega o dashboard
-    active_classes = Classroom.objects.filter(active_now=True)
-    recent_attendances = Attendance.objects.all().order_by('-timestamp')[:50]
-    
-    #busca todos os alunos para a gestão
-    all_students = Student.objects.all().order_by('user__first_name')
-    
-    # busca todas as turmas
     all_classrooms = Classroom.objects.all()
-    
     selected_class_id = request.GET.get('class_id')
+    
     if selected_class_id:
         selected_class = get_object_or_404(Classroom, id=selected_class_id)
     else:
         selected_class = Classroom.objects.filter(active_now=True).first()
     
-    
-    stats = {
-        'total': 0,
-        'presentes': 0,
-        'faltando': 0,
-        'taxa_presenca': 0
-    }
-    
-    recent_attendances = []
+    hoje = date.today()
+    filtro_hoje = Q(attendances__timestamp__date=hoje)
     
     if selected_class:
-        # Total de matriculados
-        stats['total'] = selected_class.enrolled_students.count()
+        filtro_hoje &= Q(attendances__classroom=selected_class)
+        base_query_alunos = selected_class.enrolled_students.all()
+    else:
+        base_query_alunos = Student.objects.all()
         
-        # Alunos que tiveram pelo menos uma presença validada nesta turma hoje
-        present_ids = Attendance.objects.filter(
-            classroom=selected_class,
-            is_valid=True,
-            timestamp__date=datetime.date.today()
-        ).values_list('student_id', flat=True).distinct()
+    # Anotação de Entradas e Saídas mapeando o relacionamento reverso (attendances)
+    all_students = base_query_alunos.annotate(
+        entradas=Count('attendances', filter=filtro_hoje & Q(attendances__direction='ENTRADA')),
+        saidas=Count('attendances', filter=filtro_hoje & Q(attendances__direction='SAÍDA'))
+    ).order_by('user__first_name')
+    
+    # Cálculo detalhado de permanência em minutos por aluno
+    for aluno in all_students:
+        atendimentos = Attendance.objects.filter(
+            student=aluno, classroom=selected_class, timestamp__date=hoje
+        ).order_by('timestamp')
         
-        stats['presentes'] = len(present_ids)
-        stats['faltando'] = stats['total'] - stats['presentes']
+        tempo_total = timedelta()
+        entrada_atual = None
         
-        if stats['total'] > 0:
-            stats['taxa_presenca'] = (stats['presentes'] / stats['total']) * 100
+        for att in atendimentos:
+            if att.direction == 'ENTRADA':
+                entrada_atual = att.timestamp
+            elif att.direction == 'SAÍDA' and entrada_atual:
+                tempo_total += (att.timestamp - entrada_atual)
+                entrada_atual = None
+                
+        # Se a aula ainda está em andamento e o aluno não registrou saída, contabiliza até o momento atual
+        if entrada_atual:
+            tempo_total += (timezone.now() - entrada_atual)
             
-        recent_attendances = Attendance.objects.filter(classroom=selected_class).order_by('-timestamp')
-    
-    
+        aluno.minutos_presente = int(tempo_total.total_seconds() / 60)
+        
+        # Definição padrão do status antes da validação de horários planejados
+        aluno.status_academico = "Aguardando processamento..."
+        aluno.cor_status = "secondary"
+        
+        if selected_class and selected_class.start_time and selected_class.end_time:
+            # Converte os horários para calcular a duração exata planejada em minutos
+            inicio = datetime.combine(hoje, selected_class.start_time)
+            fim = datetime.combine(hoje, selected_class.end_time)
+            duracao_total = (fim - inicio).total_seconds() / 60
+            
+            # Divide o bloco duplo em frações de uma hora de aula isolada
+            tempo_uma_aula = duracao_total / 2
+            
+            meta_1_presenca = tempo_uma_aula * 0.75
+            meta_2_presencas = duracao_total * 0.75
+            
+            # Verificação progressiva das metas de minutos em sala de aula
+            if aluno.minutos_presente >= meta_2_presencas:
+                aluno.status_academico = "2 Presenças Contabilizadas"
+                aluno.cor_status = "success"
+            elif aluno.minutos_presente >= meta_1_presenca:
+                aluno.status_academico = "1 Presença Contabilizada (Parcial)"
+                aluno.cor_status = "warning"
+            else:
+                aluno.status_academico = "Presença Não Contabilizada (Tempo Insuficiente)"
+                aluno.cor_status = "danger"
+
+    # Mapeamento do fluxo transacional para a tabela de logs da interface
+    recent_attendances = []
+    if selected_class:
+        recent_attendances = list(Attendance.objects.filter(classroom=selected_class, timestamp__date=hoje).order_by('-timestamp'))
+        
+        mapa_contagens = {s.id: {'in': s.entradas, 'out': s.saidas} for s in all_students}
+        
+        for att in recent_attendances:
+            counts = mapa_contagens.get(att.student_id, {'in': 0, 'out': 0})
+            att.total_entradas = counts['in']
+            att.total_saidas = counts['out']
+            
+        presentes_count = sum(1 for s in all_students if s.entradas > s.saidas)
+        
+        # Consolidação métrica para preenchimento do widget vertical unificado
+        stats = {
+            'total': selected_class.enrolled_students.count(),
+            'presentes': presentes_count,
+            'faltando': max(0, selected_class.enrolled_students.count() - presentes_count),
+            'total_hours': selected_class.total_hours,
+            'hours_taught': selected_class.hours_taught,
+        }
+    else:
+        stats = {'total': 0, 'presentes': 0, 'faltando': 0, 'total_hours': 0, 'hours_taught': 0}
+
     context = {
-        'active_classes': active_classes,
         'recent_attendances': recent_attendances,
-        'students': all_students, # envia para o HTML
-        'classrooms' : all_classrooms,
-        'selected_class' : selected_class,
-        'stats' : stats,
+        'students': all_students,
+        'classrooms': all_classrooms,
+        'selected_class': selected_class,
+        'stats': stats,
     }
-    
+    context['all_students_global'] = Student.objects.all().order_by('user__first_name')
     return render(request, 'core/teacher_dashboard.html', context)
 
 
@@ -94,7 +210,7 @@ def recent_attendances_api(request):
     
     for att in recent:
         data.append({
-            'horario': att.timestamp.strftime("%H:%M:%S"),
+            'horario': timezone.localtime(att.timestamp).strftime("%H:%M:%S"),
             'aluno_nome': att.student.user.get_full_name() or att.student.user.username,
             'matricula':att.student.registration_id,
             'is_valid': att.is_valid,
@@ -120,8 +236,118 @@ def export_attendance_csv(request, class_id):
         writer.writerow([
             att.student.user.get_full_name(),
             att.student.registration_id,
-            att.timestamp.strftime('%d/%m/%Y %H:%M'),
+            timezone.localtime(att.timestamp).strftime('%d/%m/%Y %H:%M'),
             'Validado' if att.is_valid else 'Suspeito'
         ])
         
     return response
+
+
+@login_required #depende de como o totem será logado
+def totem_display(request):
+    """Renderiza a interface gráfica exclusiva do terminal biométrico (sem barras de navegação)"""
+    return render(request, 'core/totem_display.html')
+
+
+# =========================================================================================
+# ==============================  MÓDULO WEBRTC (NÍVEL DEUS) ==============================
+# =========================================================================================
+
+# Precisamos guardar as conexões ativas na memória do servidor
+pcs = set()
+
+@csrf_exempt
+@csrf_exempt
+async def webrtc_offer(request):
+    """ Endpoint assíncrono que recebe o convite do celular e inicia o Streaming """
+    if request.method == "POST":
+        corpo = json.loads(request.body)
+        
+        offer = RTCSessionDescription(sdp=corpo["sdp"], type=corpo["type"])
+        class_id = corpo.get("class_id")
+
+        pc = RTCPeerConnection()
+        pcs.add(pc)
+
+        dc_ref = {"channel": None}
+
+        @pc.on("datachannel")
+        def on_datachannel(channel):
+            dc_ref["channel"] = channel
+            print(f"📡 Data Channel WebRTC aberto para turma {class_id}!")
+
+        @pc.on("track")
+        def on_track(track):
+            if track.kind == "video":
+                print("📹 Vídeo nativo recebido! Extraindo frames em tempo real...")
+                
+                latest_frame = None
+                correndo = True  # Flag de controle para matar os loops imediatamente
+
+                # 1. O LEITOR: Para assim que a câmara desliga
+                async def leitor_continuo():
+                    nonlocal latest_frame, correndo
+                    while correndo:
+                        try:
+                            latest_frame = await track.recv()
+                        except Exception:
+                            correndo = False
+                            break
+
+                # 2. A IA: Para imediatamente se o WebRTC fechar ou falhar
+                async def processador_ia():
+                    nonlocal latest_frame, correndo
+                    while correndo:
+                        try:
+                            if pc.connectionState in ["failed", "closed"]:
+                                correndo = False
+                                break
+
+                            if latest_frame is not None:
+                                frame_para_processar = latest_frame
+                                latest_frame = None 
+                                
+                                img = frame_para_processar.to_ndarray(format="bgr24")
+                                
+                                if ia_system is not None:
+                                    ia_system.LINHA_VIRTUAL_X = img.shape[1] // 2
+                                    resultado = await sync_to_async(ia_system.run_recognition_get_data)(img)
+                                    faces_out, deve_atualizar_tela = resultado
+
+                                    channel = dc_ref.get("channel")
+                                    if channel and channel.readyState == "open":
+                                        resposta = {
+                                            "status": "sucesso",
+                                            "faces": faces_out,
+                                            "image_w": img.shape[1],
+                                            "image_h": img.shape[0],
+                                            "atualizar_tela": deve_atualizar_tela
+                                        }
+                                        channel.send(json.dumps(resposta))
+                            else:
+                                await asyncio.sleep(0.02)
+                        except Exception as e:
+                            print(f"Erro no loop da IA: {e}")
+                            correndo = False
+                            break
+
+                # Inicia as duas tarefas em segundo plano
+                asyncio.create_task(leitor_continuo())
+                asyncio.create_task(processador_ia())
+
+        @pc.on("connectionstatechange")
+        async def on_connectionstatechange():
+            print("Status WebRTC:", pc.connectionState)
+            if pc.connectionState in ["failed", "closed"]:
+                pcs.discard(pc)
+
+        await pc.setRemoteDescription(offer)
+        answer = await pc.createAnswer()
+        await pc.setLocalDescription(answer)
+
+        return JsonResponse({
+            "sdp": pc.localDescription.sdp,
+            "type": pc.localDescription.type
+        })
+    
+    return JsonResponse({"erro": "Apenas POST permitido"})

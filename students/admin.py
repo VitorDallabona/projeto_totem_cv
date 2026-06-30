@@ -18,8 +18,15 @@ class ClassroomAdmin(admin.ModelAdmin):
     
 @admin.register(Attendance)
 class AttendanceAdmin(admin.ModelAdmin):
-    list_display = ('student', 'classroom', 'timestamp', 'is_valid', 'liveness_score')
-    list_filter = ('is_valid', 'classroom')
+    list_display = ('get_student_name', 'direction', 'timestamp', 'liveness_score', 'is_valid')
+    list_filter = ('direction', 'is_valid', 'classroom', 'timestamp')
+    search_fields = ('student__user__first_name', 'student__user__last_name')
+    readonly_fields = ('timestamp',)
+    ordering = ('-timestamp',)
+    
+    def get_student_name(self, obj):
+        return obj.student.user.get_full_name()
+    get_student_name.short_description = "Aluno"
     
     
 @admin.register(Profile)

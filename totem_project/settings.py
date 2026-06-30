@@ -26,12 +26,14 @@ SECRET_KEY = 'django-insecure-q%6^7aj&kkxi+e_!s#4-2!d(r=q7f2-np=rhcn93^r#kgu4@c6
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['*']
+ALLOWED_HOSTS = ["*"]
+
 
 CSRF_TRUSTED_ORIGINS = ['https://wisplike-concerned-maternal.ngrok-free.dev']
 # Application definition
 
 INSTALLED_APPS = [
+    'daphne',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -40,8 +42,8 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'rest_framework',
     'core',
-    'api',
     'students',
+    'channels',
 ]
 
 MIDDLEWARE = [
@@ -107,12 +109,10 @@ AUTH_PASSWORD_VALIDATORS = [
 # Internationalization
 # https://docs.djangoproject.com/en/6.0/topics/i18n/
 
-LANGUAGE_CODE = 'en-us'
 
-TIME_ZONE = 'UTC'
-
+TIME_ZONE = 'America/Sao_Paulo'
+LANGUAGE_CODE = 'pt-br' 
 USE_I18N = True
-
 USE_TZ = True
 
 
@@ -129,3 +129,5 @@ MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 # Redirecionamentos do Sistema de Autenticação
 LOGIN_REDIRECT_URL = '/'
 LOGOUT_REDIRECT_URL = '/accounts/login/'
+
+ASGI_APPLICATION = 'totem_project.asgi.application'

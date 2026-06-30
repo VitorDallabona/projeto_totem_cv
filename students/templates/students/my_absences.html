@@ -1,46 +1,126 @@
 {% extends 'core/base.html' %}
+{% load static %}
 
 {% block content %}
-<div class="row justify-content-center mt-4">
-    <div class="col-md-10">
-        <div class="card shadow-sm">
-            <div class="card-header bg-info text-white">
-                <h5 class="mb-0">Meu Histórico de Presenças</h5>
-            </div>
-            <div class="card-body">
-                <div class="mb-4">
-                    <h6 class="mb-1"><strong>Aluno:</strong> {{ user.get_full_name|default:user.username }}</h6>
-                    <span class="text-muted"><strong>Matrícula:</strong> {{ user.student_profile.registration_id }}</span>
-                </div>
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h2 class="fw-bold text-dark mb-0" style="letter-spacing: -0.5px;">Painel do Aluno</h2>
+        <span class="text-muted small">Acompanhamento Individual de Frequência e Biometria</span>
+    </div>
+</div>
 
-                <div class="table-responsive">
-                    <table class="table table-hover table-bordered">
-                        <thead class="table-light">
+<div class="card border-0 shadow-sm rounded-4 mb-4">
+    <div class="card-header bg-white border-bottom-0 pt-4 pb-0 px-4">
+        <h6 class="mb-0 fw-bold text-dark text-uppercase" style="letter-spacing: 0.5px;">Meu Desempenho Acadêmico</h6>
+    </div>
+    <div class="card-body p-4">
+        <div class="row align-items-center">
+            
+            <div class="col-md-7 border-end-md">
+                <div class="row text-center text-md-start g-4">
+                    <div class="col-6 col-md-4">
+                        <span class="text-muted small fw-bold text-uppercase d-block mb-1" style="font-size: 0.7rem;">Aulas Ministradas</span>
+                        <h2 class="fw-bold text-dark mb-0">{{ stats.total_aulas|default:"0" }}</h2>
+                    </div>
+                    <div class="col-6 col-md-4 border-start">
+                        <span class="text-success small fw-bold text-uppercase d-block mb-1" style="font-size: 0.7rem;">Presenças</span>
+                        <h2 class="fw-bold text-success mb-0">{{ stats.presencas|default:"0" }}</h2>
+                    </div>
+                    <div class="col-12 col-md-4 border-start-md mt-4 mt-md-0">
+                        <span class="text-primary small fw-bold text-uppercase d-block mb-1" style="font-size: 0.7rem;">Frequência Atual</span>
+                        <h2 class="fw-bold text-primary mb-0">{{ stats.taxa_frequencia|default:"0" }}<span class="fs-6 text-muted">%</span></h2>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-5 mt-4 mt-md-0">
+                <div class="d-flex justify-content-center align-items-center" style="height: 120px;">
+                    <canvas id="studentAttendanceChart"></canvas>
+                </div>
+            </div>
+
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-4 mb-4 mb-md-0">
+        <div class="card border-0 shadow-sm rounded-4 overflow-hidden h-100">
+            <div class="card-header bg-white border-bottom py-3 px-4">
+                <h6 class="mb-0 fw-bold text-dark text-uppercase" style="letter-spacing: 0.5px;">Meu Perfil</h6>
+            </div>
+            <div class="card-body p-4 text-center d-flex flex-column justify-content-center">
+                
+                <div class="mb-4">
+                    {% if user.student_profile.profile_photo %}
+                        <img src="{{ user.student_profile.photo_url }}" class="rounded-circle shadow-sm" style="width: 130px; height: 130px; object-fit: cover; border: 4px solid #fff; outline: 1px solid #dee2e6;">
+                    {% else %}
+                        <div class="bg-light rounded-circle border mx-auto d-flex align-items-center justify-content-center text-secondary fw-bold shadow-sm" style="width: 130px; height: 130px; font-size: 2.5rem;">
+                            {{ user.first_name|first }}{{ user.last_name|first }}
+                        </div>
+                    {% endif %}
+                </div>
+                
+                <h5 class="fw-bold text-dark mb-1">{{ user.get_full_name|default:user.username }}</h5>
+                <p class="text-muted mb-4 fw-medium">{{ user.student_profile.registration_id }}</p>
+                
+                <div class="mt-auto">
+                    <a href="{% url 'update_student_photo' user.student_profile.id %}" class="btn btn-light border border-secondary border-opacity-25 w-100 text-dark fw-semibold rounded-3 py-2 shadow-sm">
+                        Atualizar Biometria Facial
+                    </a>
+                    <p class="text-muted small mt-3 mb-0" style="font-size: 0.75rem;">
+                        Mantenha sua foto atualizada para garantir o rápido reconhecimento nas catracas do totem.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-8">
+        <div class="card border-0 shadow-sm rounded-4 overflow-hidden h-100">
+            <div class="card-header bg-white border-bottom py-3 px-4">
+                <h6 class="mb-0 fw-bold text-dark text-uppercase" style="letter-spacing: 0.5px;">Histórico de Movimentações</h6>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive" style="max-height: 500px; overflow-y: auto;">
+                    <table class="table table-hover align-middle mb-0">
+                        <thead class="table-light sticky-top">
                             <tr>
-                                <th>Data</th>
-                                <th>Horário</th>
-                                <th>Turma</th>
-                                <th>Status</th>
+                                <th class="text-muted fw-semibold border-0 py-3 ps-4" style="font-size: 0.85rem;">DATA / HORA</th>
+                                <th class="text-muted fw-semibold border-0 py-3" style="font-size: 0.85rem;">TURMA</th>
+                                <th class="text-muted fw-semibold border-0 py-3" style="font-size: 0.85rem;">DIREÇÃO</th>
+                                <th class="text-muted fw-semibold border-0 py-3 pe-4" style="font-size: 0.85rem;">STATUS</th>
                             </tr>
                         </thead>
                         <tbody>
                             {% for att in attendances %}
                             <tr>
-                                <td>{{ att.timestamp|date:"d/m/Y" }}</td>
-                                <td>{{ att.timestamp|time:"H:i:s" }}</td>
-                                <td>{{ att.classroom.subject }}</td>
+                                <td class="ps-4">
+                                    <strong class="d-block text-dark" style="font-size: 0.9rem;">{{ att.timestamp|date:"d/m/Y" }}</strong>
+                                    <small class="text-secondary fw-medium">{{ att.timestamp|time:"H:i:s" }}</small>
+                                </td>
+                                <td class="text-dark fw-medium">{{ att.classroom.subject }}</td>
                                 <td>
+                                    <span class="badge rounded-pill fw-bold px-3 py-1 border {% if att.direction == 'ENTRADA' %}bg-success bg-opacity-10 text-success border-success{% else %}bg-danger bg-opacity-10 text-danger border-danger{% endif %} border-opacity-50">
+                                        {{ att.direction }}
+                                    </span>
+                                </td>
+                                <td class="pe-4">
                                     {% if att.is_valid %}
-                                        <span class="badge bg-success">Presença Confirmada</span>
+                                        <span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25 rounded-3 px-2 py-1 fw-semibold">
+                                            Confirmada
+                                        </span>
                                     {% else %}
-                                        <span class="badge bg-warning text-dark">Análise Pendente ({{ att.liveness_score }})</span>
+                                        <span class="badge bg-warning bg-opacity-10 text-warning border border-warning border-opacity-50 rounded-3 px-2 py-1 fw-semibold text-dark">
+                                            Pendente ({{ att.liveness_score }})
+                                        </span>
                                     {% endif %}
                                 </td>
                             </tr>
                             {% empty %}
                             <tr>
-                                <td colspan="4" class="text-center text-muted py-4">
-                                    Nenhum registro de presença encontrado até o momento.
+                                <td colspan="4" class="text-center text-muted py-5">
+                                    <p class="mb-0 fw-medium">Nenhum registro de presença encontrado até o momento.</p>
                                 </td>
                             </tr>
                             {% endfor %}
@@ -51,4 +131,70 @@
         </div>
     </div>
 </div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const canvas = document.getElementById('studentAttendanceChart');
+        if (canvas) {
+            const ctx = canvas.getContext('2d');
+            
+            // Dados recebidos do Django
+            const totalAulas = parseInt("{{ stats.total_aulas|default:0 }}");
+            const presencas = parseInt("{{ stats.presencas|default:0 }}");
+            
+            // Calcula o número de faltas.
+            let faltas = totalAulas - presencas;
+            if (faltas < 0) faltas = 0;
+
+            // Se não houver aulas ministradas ainda, plota um gráfico vazio e cinza.
+            const data = totalAulas > 0 ? [presencas, faltas] : [0, 1];
+            const bgColors = totalAulas > 0 ? ['#198754', '#dc3545'] : ['#e9ecef', '#e9ecef'];
+            const labels = totalAulas > 0 ? ['Presenças', 'Faltas'] : ['Sem Dados', 'Sem Dados'];
+
+            new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        data: data,
+                        backgroundColor: bgColors,
+                        borderWidth: 0,
+                        hoverOffset: 4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    cutout: '75%',
+                    plugins: {
+                        legend: {
+                            position: 'right',
+                            labels: {
+                                usePointStyle: true,
+                                boxWidth: 8,
+                                font: {
+                                    family: "'Segoe UI', Roboto, sans-serif",
+                                    size: 11
+                                }
+                            }
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    if (totalAulas === 0) return ' Nenhuma aula computada';
+                                    let label = context.label || '';
+                                    if (label) { label += ': '; }
+                                    if (context.parsed !== null) { label += context.parsed; }
+                                    return label;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    });
+</script>
 {% endblock %}

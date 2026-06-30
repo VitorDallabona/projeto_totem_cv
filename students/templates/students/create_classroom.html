@@ -1,0 +1,210 @@
+{% extends 'core/base.html' %}
+
+{% block content %}
+<div class="row justify-content-center mt-4 mb-5">
+    <div class="col-md-9 col-lg-8">
+        
+        {% if messages %}
+            {% for message in messages %}
+                <div class="alert alert-{% if message.tags == 'error' %}danger{% else %}{{ message.tags }}{% endif %} alert-dismissible fade show shadow-sm border-0 rounded-4" role="alert">
+                    <span class="fw-medium">{{ message }}</span>
+                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Fechar"></button>
+                </div>
+            {% endfor %}
+        {% endif %}
+
+        <div class="card border-0 shadow rounded-4 overflow-hidden">
+            <div class="card-header bg-primary bg-gradient border-bottom-0 py-4 px-4 text-center">
+                <h4 class="mb-1 fw-bold text-white" style="letter-spacing: -0.5px;">Cadastrar Nova Turma</h4>
+                <p class="text-white-50 small mb-0">Configure os detalhes da disciplina e vincule os alunos.</p>
+            </div>
+            
+            <div class="card-body p-4 p-md-5">
+                <form method="post">
+                    {% csrf_token %}
+                    
+                    <div class="d-flex align-items-center mb-4">
+                        <span class="bg-primary text-white rounded-circle d-flex align-items-center justify-content-center fw-bold me-2" style="width: 28px; height: 28px; font-size: 0.85rem;">1</span>
+                        <h6 class="fw-bold text-dark mb-0 text-uppercase" style="letter-spacing: 0.5px;">Detalhes da Disciplina</h6>
+                    </div>
+                    
+                    <div class="row g-3 mb-5 p-4 bg-light rounded-4 border border-secondary border-opacity-10">
+                        {% for field in form %}
+                            {% if field.name != 'enrolled_students' %}
+                                <div class="{% if field.name == 'subject' or field.name == 'teacher' %}col-12{% else %}col-md-4 col-sm-6{% endif %}">
+                                    <label for="{{ field.id_for_label }}" class="form-label fw-bold text-secondary small mb-1">
+                                        {{ field.label }}
+                                    </label>
+                                    {{ field }}
+                                    {% if field.help_text %}
+                                        <div class="form-text small text-muted mt-1" style="font-size: 0.75rem;">{{ field.help_text }}</div>
+                                    {% endif %}
+                                    {% for error in field.errors %}
+                                        <div class="text-danger small fw-medium mt-1">{{ error }}</div>
+                                    {% endfor %}
+                                </div>
+                            {% endif %}
+                        {% endfor %}
+                    </div>
+
+                    <div class="d-flex align-items-center mb-4">
+                        <span class="bg-primary text-white rounded-circle d-flex align-items-center justify-content-center fw-bold me-2" style="width: 28px; height: 28px; font-size: 0.85rem;">2</span>
+                        <h6 class="fw-bold text-dark mb-0 text-uppercase" style="letter-spacing: 0.5px;">Vincular Alunos</h6>
+                    </div>
+                    
+                    <div class="input-group mb-3 shadow-sm rounded-3 overflow-hidden border border-secondary border-opacity-25">
+                        <span class="input-group-text bg-white border-0 text-muted ps-3">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-search" viewBox="0 0 16 16">
+                                <path d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001c.03.04.062.078.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1.007 1.007 0 0 0-.115-.1zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0z"/>
+                            </svg>
+                        </span>
+                        <input type="text" id="search-student" class="form-control border-0 py-2 ps-2 shadow-none" placeholder="Buscar por nome ou número de matrícula..." autocomplete="off">
+                    </div>
+
+                    <div class="student-list-container mb-4">
+                        {{ form.enrolled_students }}
+                    </div>
+                    {% for error in form.enrolled_students.errors %}
+                        <div class="text-danger small fw-medium mt-1">{{ error }}</div>
+                    {% endfor %}
+                    
+                    <div class="d-flex gap-3 mt-5 border-top pt-4">
+                        <a href="javascript:history.back()" class="btn btn-light border border-secondary border-opacity-25 fw-semibold px-4 py-2 rounded-3 text-secondary w-50 text-center text-decoration-none transition-all hover-bg-gray">Cancelar</a>
+                        <button type="submit" class="btn btn-primary fw-bold px-4 py-2 rounded-3 shadow-sm w-50 transition-all">Salvar e Criar Turma</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    document.addEventListener("DOMContentLoaded", function() {
+        // 1. Estilização automática dos inputs
+        const inputs = document.querySelectorAll('input:not([type="checkbox"]):not([type="radio"]), select, textarea');
+        inputs.forEach(input => {
+            if (input.id !== 'search-student') {
+                // Bordas mais sutis e fundo branco para destacar no painel cinza
+                input.classList.add('form-control', 'bg-white', 'border', 'border-secondary', 'border-opacity-25', 'py-2', 'shadow-sm', 'rounded-3');
+            }
+        });
+
+        // 2. Lógica do Filtro de Pesquisa Instantânea
+        const searchInput = document.getElementById('search-student');
+        const studentLabels = document.querySelectorAll('.student-list-container label');
+
+        if (searchInput) {
+            searchInput.addEventListener('input', function() {
+                const filterText = this.value.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, ""); 
+                
+                studentLabels.forEach(label => {
+                    const studentText = label.textContent.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+                    const wrapperDiv = label.parentElement; 
+                    
+                    if (studentText.includes(filterText)) {
+                        wrapperDiv.style.display = 'block';
+                    } else {
+                        wrapperDiv.style.display = 'none';
+                    }
+                });
+            });
+        }
+
+        // 3. Destacar visualmente as linhas marcadas (Efeito UI Moderno)
+        const checkboxes = document.querySelectorAll('.student-list-container input[type="checkbox"]');
+        
+        function updateLabelStyle(checkbox) {
+            const label = checkbox.closest('label');
+            if (checkbox.checked) {
+                label.classList.add('selected-item');
+            } else {
+                label.classList.remove('selected-item');
+            }
+        }
+
+        // Aplica o estilo inicial ao carregar a página
+        checkboxes.forEach(cb => {
+            updateLabelStyle(cb);
+            // Adiciona o evento de clique para mudar a cor na hora
+            cb.addEventListener('change', function() {
+                updateLabelStyle(this);
+            });
+        });
+    });
+</script>
+
+<style>
+    /* Caixa Rolável dos Alunos */
+    .student-list-container {
+        max-height: 280px;
+        overflow-y: auto;
+        padding: 12px;
+        background-color: #f8f9fa;
+        border-radius: 0.75rem;
+        border: 1px solid #dee2e6;
+        box-shadow: inset 0 2px 5px rgba(0,0,0,0.02);
+    }
+    
+    /* Organização de cada linha (checkbox + texto) */
+    .student-list-container div label {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 8px;
+        cursor: pointer;
+        font-weight: 500;
+        color: #495057;
+        font-size: 0.95rem;
+        padding: 10px 14px;
+        background: white;
+        border-radius: 8px;
+        border: 1px solid #e9ecef;
+        transition: all 0.2s ease-in-out;
+    }
+    
+    /* Efeito de hover na linha do aluno */
+    .student-list-container div label:hover {
+        background-color: #f1f3f5;
+        border-color: #ced4da;
+        transform: translateY(-1px);
+    }
+
+    /* Estilo ativo via JS quando o checkbox é marcado */
+    .student-list-container div label.selected-item {
+        background-color: #e7f1ff !important;
+        border-color: #0d6efd !important;
+        color: #084298;
+        box-shadow: 0 2px 4px rgba(13, 110, 253, 0.1);
+    }
+
+    /* Customização do Checkbox */
+    .student-list-container div input[type="checkbox"] {
+        width: 18px;
+        height: 18px;
+        cursor: pointer;
+        accent-color: #0d6efd;
+        margin-top: 2px;
+    }
+
+    /* Efeitos de Botão Hover */
+    .hover-bg-gray:hover {
+        background-color: #e9ecef !important;
+    }
+
+    /* Customização da Barra de Rolagem */
+    .student-list-container::-webkit-scrollbar {
+        width: 8px;
+    }
+    .student-list-container::-webkit-scrollbar-track {
+        background: transparent; 
+    }
+    .student-list-container::-webkit-scrollbar-thumb {
+        background: #ced4da; 
+        border-radius: 10px;
+        border: 2px solid #f8f9fa;
+    }
+    .student-list-container::-webkit-scrollbar-thumb:hover {
+        background: #adb5bd; 
+    }
+</style>
+{% endblock %}

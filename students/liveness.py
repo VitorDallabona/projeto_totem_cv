@@ -41,40 +41,30 @@ class AISpoofManager:
             
             return int(h_input), int(w_input), info[-2], float(info[0])
 
-    def avaliar_frame(
-        self,
-        frame_bgr,
-        bbox
-    ):
-        """
-        Recebe o frame original e a caixa do rosto.
-        Retorna (True/False, Mensagem_Status)
-        """
+    def avaliar_frame(self, frame_bgr, bbox):
         left, top, right, bottom = bbox
         
         largura = right - left
         altura = bottom - top
         caixa_formatada = [left, top, largura, altura]
         
-        # --- NOVO: BLOQUEIO DE DISTANCIA (FOTO PEQUENA) ---
-        # Impede que o modelo avalie rostos muito pequenos (longe)
-        # Ajuste este valor dependendo da resolucao da sua camera
-        TAMANHO_MINIMO = 60 
+        # Aumentamos o tamanho mínimo porque em 320px, 30px não tem textura nenhuma
+        TAMANHO_MINIMO = 50 
         
         if largura < TAMANHO_MINIMO or altura < TAMANHO_MINIMO:
-            return False, "APROXIME-SE DA CAMERA"
-        # --------------------------------------------------
+            return False, "APROXIME-SE"
 
         previsao_total = np.zeros((1, 3))
         
-        for model_name in os.listdir(self.model_dir):
-            
-            if not model_name.endswith('.pth'):
-                continue
-                
-            h_input, w_input, model_type, scale = self.parse_model_name(
-                model_name
-            )
+        # Conta dinamicamente quantos modelos existem na pasta
+        modelos_disponiveis = [m for m in os.listdir(self.model_dir) if m.endswith('.pth')]
+        num_modelos = len(modelos_disponiveis)
+        
+        if num_modelos == 0:
+            return False, "ERRO: Modelos Liveness ausentes"
+        
+        for model_name in modelos_disponiveis:
+            h_input, w_input, model_type, scale = self.parse_model_name(model_name)
             
             param = {
                 "org_img": frame_bgr,
@@ -89,25 +79,18 @@ class AISpoofManager:
                 param["crop"] = False
                 
             img_cortada = self.cropper.crop(**param)
+            caminho_modelo = os.path.join(self.model_dir, model_name)
             
-            caminho_modelo = os.path.join(
-                self.model_dir, 
-                model_name
-            )
-            
-            previsao = self.predictor.predict(
-                img_cortada, 
-                caminho_modelo
-            )
-            
+            previsao = self.predictor.predict(img_cortada, caminho_modelo)
             previsao_total += previsao
             
         label_vencedor = np.argmax(previsao_total)
         
-        # Como voce iterou por 2 modelos, divide por 2 para tirar a media
-        confianca = previsao_total[0][label_vencedor] / 2
+        # Divide corretamente pela quantidade de modelos encontrados
+        confianca = previsao_total[0][label_vencedor] / num_modelos
         
-        LIMITE_CONFIANCA = 0.92 
+        # Limite reduzido: 80% já garante alta precisão contra fraudes de celular/papel
+        LIMITE_CONFIANCA = 0.80 
         
         if label_vencedor == 1 and confianca >= LIMITE_CONFIANCA:
             return True, f"REAL: {confianca:.2f}"

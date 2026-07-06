@@ -1,6 +1,10 @@
 asgiref==3.11.1
 click==8.3.3
 cmake==4.3.2
+channels
+daphne
+aiortc
+insightface
 Django==6.0.5
 djangorestframework==3.17.1
 dlib==20.0.1

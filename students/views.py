@@ -211,34 +211,34 @@ def update_student_photo(request, student_id):
             img = img.convert('RGB')
             img_array = np.array(img)
             
-            # Validação rápida de rosto
-            faces = face_app.get(img_array)
-
-            embedding = faces[0].embedding
+            # Validação rápida de rosto com a IA padrão (dlib/face_recognition)
+            encodings = face_recognition.face_encodings(img_array)
             
+            # 1. Verifica PRIMEIRO se a IA achou algum rosto na foto
             if encodings:
                 matricula = student.user.username
                 
-                #remove qualquer variação antiga (jpg, jpeg, png) da mesma matrícula
+                # remove qualquer variação antiga (jpg, jpeg, png) da mesma matrícula
                 if student.profile_photo:
                     try:
                         diretorio = os.path.dirname(student.profile_photo.path)
                         if os.path.exists(diretorio):
                             for arquivo in os.listdir(diretorio):
-                                # Extrai o nome do arquivo sem a extensão e compara com a matrícula
                                 nome_arquivo, _ = os.path.splitext(arquivo)
                                 if nome_arquivo == matricula:
                                     os.remove(os.path.join(diretorio, arquivo))
                     except Exception as e:
                         print(f"Erro ao limpar arquivos antigos no disco: {e}")
                 
-                #salva a nova foto e atualiza o banco de dados
+                # 2. Extrai a matriz matemática de 128 dimensões
                 novo_encoding = encodings[0].tolist()
+                
+                # salva a nova foto e atualiza o banco de dados
                 student.profile_photo = photo
                 student.face_encoding = novo_encoding
                 student.save()  # Salva primeiro para o Django gerar o nome definitivo do arquivo
                 
-                #Removendo chaves antigas com outras extensões do JSON
+                # Removendo chaves antigas com outras extensões do JSON e gravando a nova
                 caminho_cache = os.path.join(settings.MEDIA_ROOT, 'faces', 'encodes.json')
                 
                 if os.path.exists(caminho_cache):
@@ -246,19 +246,17 @@ def update_student_photo(request, student_id):
                         with open(caminho_cache, 'r') as f:
                             cache_ia = json.load(f)
                         
-                        # Procura e elimina qualquer chave antiga ligada a essa matrícula (ex: 202601.jpeg)
                         chaves_para_remover = [k for k in cache_ia if os.path.splitext(k)[0] == matricula]
                         for k in chaves_para_remover:
                             del cache_ia[k]
                         
-                        # Define o novo registro usando o nome exato gerado pelo storage do Django (ex: 202601.jpg)
                         nome_arquivo_salvo = os.path.basename(student.profile_photo.name)
                         cache_ia[nome_arquivo_salvo] = novo_encoding
                         
                         with open(caminho_cache, 'w') as f:
                             json.dump(cache_ia, f)
                             
-                        # Se o Totem estiver ativo em memória, recarrega o dicionário limpo
+                        # Atualiza a memória RAM do totem físico, se estiver rodando
                         if 'ia_system' in globals() and ia_system is not None and hasattr(ia_system, 'atualizar_banco_rostos'):
                             ia_system.atualizar_banco_rostos()
                             
@@ -268,13 +266,16 @@ def update_student_photo(request, student_id):
                 messages.success(request, 'Biometria facial atualizada com sucesso!')
                 return redirect('student_absences') if is_own_student else redirect('/')
             else:
-                messages.error(request, 'Nenhum rosto detectado na nova foto. Tente uma foto mais iluminada.')
+                # Cai aqui se o face_recognition retornar vazio (foto virada, escura, etc)
+                messages.error(request, 'Nenhum rosto detectado na nova foto. Tente uma foto nítida e bem iluminada.')
                 return render(request, 'students/update_photo.html', {'student': student})
+                
         except Exception as e:
             messages.error(request, f'Erro ao processar: {e}')
             return render(request, 'students/update_photo.html', {'student': student})
 
     return render(request, 'students/update_photo.html', {'student': student})
+
 
 @csrf_exempt
 def processar_frame_camera(request):

@@ -364,10 +364,10 @@
         const classId = classSelect ? classSelect.value : null;
 
         // Limpeza Total ao desligar
-        if (peerConnection) {
-            peerConnection.close();
-            peerConnection = null;
-        }
+        peerConnection = new RTCPeerConnection({
+            iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+            bundlePolicy: 'max-bundle'
+        });
         if (videoStream) {
             videoStream.getTracks().forEach(track => track.stop());
             videoStream = null;
@@ -419,14 +419,16 @@
                     constraints.video = {
                         facingMode: "user",
                         width: { ideal: 1280, min: 640 },
-                        height: { ideal: 720, min: 480 }
+                        height: { ideal: 720, min: 480 },
+                        frameRate: { ideal: 30, max: 30 } // Força o browser a enviar 30 quadros
                     };
                 } else {
                     // MODO VARREDURA: Celular em pé (Retrato) - 720p (com mínimo de 480p)
                     constraints.video = {
                         facingMode: "environment",
                         width: { ideal: 720, min: 480 },
-                        height: { ideal: 1280, min: 640 }
+                        height: { ideal: 1280, min: 640 },
+                        frameRate: { ideal: 30, max: 30 } // Força o browser a enviar 30 quadros
                     };
                 }
                 
@@ -444,6 +446,10 @@
                 
                 dataChannel.onmessage = (event) => {
                     const data = JSON.parse(event.data);
+                    const agora = Date.now();
+                    
+                    // DESCARTAR PACOTE SE FOR MAIS ANTIGO QUE 500ms (Reduz o lag acumulado)
+                    if (agora - data.timestamp > 500) return;
                     
                     if (data.status === "sucesso") {
                         statusBadge.innerText = "WebRTC Online ⚡";
@@ -502,11 +508,28 @@
                     }
                 };
 
-                // 4. Adiciona a trilha de vídeo nativa ao tubo do WebRTC
-                videoStream.getTracks().forEach(track => {
+               const tracks = videoStream.getTracks();
+                for (const track of tracks) {
                     peerConnection.addTrack(track, videoStream);
-                });
-
+                    
+                    if (track.kind === 'video') {
+                        // Aguarda um momento para que o sender seja criado e o track esteja ativo
+                        await new Promise(r => setTimeout(r, 500));
+                        
+                        const sender = peerConnection.getSenders().find(s => s.track && s.track.kind === 'video');
+                        if (sender) {
+                            try {
+                                const params = sender.getParameters();
+                                if (!params.encodings) params.encodings = [{}];
+                                params.encodings[0].maxFramerate = 30;
+                                await sender.setParameters(params);
+                                console.log("✅ FrameRate forçado para 30 FPS");
+                            } catch (e) {
+                                console.warn("⚠️ Não foi possível forçar o FrameRate:", e);
+                            }
+                        }
+                    }
+                }
                 // 5. O Aperto de Mãos (SDP Offer)
                 const offer = await peerConnection.createOffer();
                 await peerConnection.setLocalDescription(offer);
@@ -541,90 +564,69 @@
 
     // --- MOTOR DE ANIMAÇÃO A 60 FPS ---
     function renderLoop() {
-        animationId = requestAnimationFrame(renderLoop);
+    animationId = requestAnimationFrame(renderLoop);
 
-        const overlay = document.getElementById('cam-overlay');
-        if (!overlay) return;
-        const ctx = overlay.getContext('2d');
+    const overlay = document.getElementById('cam-overlay');
+    if (!overlay) return;
+    const ctx = overlay.getContext('2d');
+    ctx.clearRect(0, 0, overlay.width, overlay.height);
 
-        ctx.clearRect(0, 0, overlay.width, overlay.height);
-
-        ctx.beginPath();
-        ctx.moveTo(overlay.width / 2, 0);
-        ctx.lineTo(overlay.width / 2, overlay.height);
-        ctx.strokeStyle = 'rgba(255, 0, 0, 0.7)';
-        ctx.lineWidth = 2;
-        ctx.stroke();
-
-        const videoRatio = lastImageW / lastImageH;
-        const overlayRatio = overlay.width / overlay.height;
-        
-        let drawWidth = overlay.width;
-        let drawHeight = overlay.height;
-        let offsetX = 0; let offsetY = 0;
-
-        if (videoRatio > overlayRatio) {
-            drawHeight = overlay.height;
-            drawWidth = overlay.height * videoRatio;
-            offsetX = (overlay.width - drawWidth) / 2;
-        } else {
-            drawWidth = overlay.width;
-            drawHeight = overlay.width / videoRatio;
-            offsetY = (overlay.height - drawHeight) / 2;
-        }
-
-        const scaleX = drawWidth / lastImageW;
-        const scaleY = drawHeight / lastImageH;
-
-        const agora = Date.now();
-        const lerpSpeed = 0.35; 
-
-        for (const id in activeFaces) {
-            const f = activeFaces[id];
-
-            if (agora - f.lastUpdate > 800) {
-                delete activeFaces[id];
-                continue;
-            }
-
-            f.currentBox.left = lerp(f.currentBox.left, f.targetBox.left, lerpSpeed);
-            f.currentBox.top = lerp(f.currentBox.top, f.targetBox.top, lerpSpeed);
-            f.currentBox.right = lerp(f.currentBox.right, f.targetBox.right, lerpSpeed);
-            f.currentBox.bottom = lerp(f.currentBox.bottom, f.targetBox.bottom, lerpSpeed);
-
-            const left = (f.currentBox.left * scaleX) + offsetX;
-            const top = (f.currentBox.top * scaleY) + offsetY;
-            const right = (f.currentBox.right * scaleX) + offsetX;
-            const bottom = (f.currentBox.bottom * scaleY) + offsetY;
-            const w = right - left;
-            const h = bottom - top;
-
-            const color = f.color || '#00FF00';
-            ctx.strokeStyle = color;
-            ctx.lineWidth = Math.max(2, Math.round(Math.min(overlay.width, overlay.height) * 0.003));
-            ctx.strokeRect(left, top, w, h);
-
-            const label = `${f.name || 'Desconhecido'} | ${f.status || ''}`;
-            ctx.font = `${Math.max(12, Math.round(overlay.height * 0.04))}px sans-serif`;
-            const textW = ctx.measureText(label).width;
-            const pad = 6;
-            const labelX = left;
-            const labelY = Math.max(0, top - Math.round(overlay.height * 0.05));
-
-            // Fundo escuro semi-transparente para leitura perfeita
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-            ctx.fillRect(labelX, labelY, textW + pad * 3, Math.round(overlay.height * 0.06));
-            
-            // Filete lateral com a cor real da caixa (Verde ou Vermelho)
-            ctx.fillStyle = color;
-            ctx.fillRect(labelX, labelY, 4, Math.round(overlay.height * 0.06));
-            
-            // Texto sempre branco e bem contrastado
-            ctx.fillStyle = '#fff';
-            // O '+ 4' empurra o texto um pouquinho pra direita para não encostar no filete
-            ctx.fillText(label, labelX + pad + 4, labelY + Math.round(overlay.height * 0.045));
-        }
+    const videoRatio = lastImageW / lastImageH;
+    const overlayRatio = overlay.width / overlay.height;
+    
+    // Calcula a escala correta para o vídeo caber no container sem distorcer
+    let drawWidth, drawHeight, offsetX, offsetY;
+    if (videoRatio > overlayRatio) {
+        drawWidth = overlay.width;
+        drawHeight = overlay.width / videoRatio;
+        offsetX = 0;
+        offsetY = (overlay.height - drawHeight) / 2;
+    } else {
+        drawHeight = overlay.height;
+        drawWidth = overlay.height * videoRatio;
+        offsetX = (overlay.width - drawWidth) / 2;
+        offsetY = 0;
     }
+
+    const scaleX = drawWidth / lastImageW;
+    const scaleY = drawHeight / lastImageH;
+
+    const agora = Date.now();
+    const lerpSpeed = 0.2; // <--- AJUSTE AQUI: 0.1 (lento) até 0.5 (rápido)
+
+    for (const id in activeFaces) {
+        const f = activeFaces[id];
+
+        // Se o rosto sumiu há mais de 500ms, removemos
+        if (agora - f.lastUpdate > 800) {
+            delete activeFaces[id];
+            continue;
+        }
+
+        // --- A MÁGICA DA INTERPOLAÇÃO ---
+        f.currentBox.left = lerp(f.currentBox.left, f.targetBox.left, lerpSpeed);
+        f.currentBox.top = lerp(f.currentBox.top, f.targetBox.top, lerpSpeed);
+        f.currentBox.right = lerp(f.currentBox.right, f.targetBox.right, lerpSpeed);
+        f.currentBox.bottom = lerp(f.currentBox.bottom, f.targetBox.bottom, lerpSpeed);
+
+        const left = (f.currentBox.left * scaleX) + offsetX;
+        const top = (f.currentBox.top * scaleY) + offsetY;
+        const w = (f.currentBox.right - f.currentBox.left) * scaleX;
+        const h = (f.currentBox.bottom - f.currentBox.top) * scaleY;
+
+        // Desenho da caixa
+        ctx.strokeStyle = f.color || '#00FF00';
+        ctx.lineWidth = 3;
+        ctx.strokeRect(left, top, w, h);
+
+        // Desenho da label
+        ctx.fillStyle = 'rgba(0,0,0,0.6)';
+        ctx.fillRect(left, top - 25, w, 25);
+        ctx.fillStyle = '#fff';
+        ctx.font = '14px sans-serif';
+        ctx.fillText(f.name, left + 5, top - 8);
+    }
+}
 
     function atualizarDashboardSilenciosamente() {
         fetch(window.location.href)

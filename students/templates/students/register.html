@@ -1,17 +1,18 @@
 {% extends 'core/base.html' %}
 
 {% block content %}
-<div class="row justify-content-center mt-4">
-    <div class="col-md-6">
-        <div class="card shadow">
-            <div class="card-header bg-primary text-white text-center">
-                <h5 class="mb-0">Cadastro Biométrico de Aluno</h5>
+<div class="row justify-content-center mt-4 mb-5">
+    <div class="col-md-8 col-lg-6">
+        <div class="card border-0 shadow-sm rounded-4 overflow-hidden">
+            <div class="card-header bg-primary text-white text-center py-4 border-bottom-0">
+                <h5 class="mb-0 fw-bold">Cadastro Biométrico de Aluno</h5>
+                <p class="small text-white-50 mb-0 mt-1">Preencha os dados e registre a face do aluno.</p>
             </div>
-            <div class="card-body">
+            <div class="card-body p-4 p-md-5 bg-white">
                 
                 {% if messages %}
                     {% for message in messages %}
-                        <div class="alert alert-{% if message.tags == 'error' %}danger{% else %}{{ message.tags }}{% endif %} alert-dismissible fade show" role="alert">
+                        <div class="alert alert-{% if message.tags == 'error' %}danger{% else %}{{ message.tags }}{% endif %} alert-dismissible fade show rounded-3" role="alert">
                             {{ message }}
                             <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Fechar"></button>
                         </div>
@@ -19,47 +20,92 @@
                 {% endif %}
 
                 {% if error %}
-                    <div class="alert alert-danger">{{ error }}</div>
+                    <div class="alert alert-danger rounded-3">{{ error }}</div>
                 {% endif %}
 
-                <form method="post" enctype="multipart/form-data">
+                <form method="post" enctype="multipart/form-data" id="registerForm">
                     {% csrf_token %}
                     
                     <div class="row">
                         <div class="col-md-6 mb-3">
-                            <label class="form-label">Nome:</label>
+                            <label class="form-label fw-semibold text-secondary small">Nome:</label>
                             {{ form.first_name }}
                         </div>
                         <div class="col-md-6 mb-3">
-                            <label class="form-label">Sobrenome:</label>
+                            <label class="form-label fw-semibold text-secondary small">Sobrenome:</label>
                             {{ form.last_name }}
                         </div>
                     </div>
 
                     <div class="mb-3">
-                        <label class="form-label">Matrícula:</label>
+                        <label class="form-label fw-semibold text-secondary small">Matrícula:</label>
                         {{ form.registration_id }}
                     </div>
 
                     <div class="mb-3">
-                        <label class="form-label">Email:</label>
+                        <label class="form-label fw-semibold text-secondary small">Email:</label>
                         {{ form.email }}
                     </div>
 
-                    <div class="mb-3">
-                        <label class="form-label">Senha:</label>
+                    <div class="mb-4">
+                        <label class="form-label fw-semibold text-secondary small">Senha Inicial:</label>
                         {{ form.password }}
                     </div>
 
+                    <hr class="border-secondary border-opacity-25 mb-4">
+
                     <div class="mb-4">
-                        <label class="form-label fw-bold">Foto para Reconhecimento Facial:</label>
-                        <br>
-                        <small class="text-muted d-block mb-2">Envie uma foto do seu rosto bem iluminada e sem óculos escuros ou máscara.</small>
-                        {{ form.profile_photo }}
+                        <label class="form-label fw-bold text-dark mb-3">Foto para Reconhecimento Facial</label>
+                        
+                        <ul class="nav nav-pills nav-fill bg-light p-1 rounded-3 mb-3" id="photoTabs" role="tablist">
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link active fw-medium" id="tab-upload" data-bs-toggle="pill" data-bs-target="#panel-upload" type="button" role="tab" onclick="stopCamera()">📁 Enviar Arquivo</button>
+                            </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link fw-medium" id="tab-camera" data-bs-toggle="pill" data-bs-target="#panel-camera" type="button" role="tab" onclick="startCamera()">📷 Tirar Foto Agora</button>
+                            </li>
+                        </ul>
+
+                        <div class="tab-content" id="photoTabsContent">
+                            <div class="tab-pane fade show active" id="panel-upload" role="tabpanel">
+                                <div class="p-3 border border-secondary border-opacity-25 rounded-3 bg-light">
+                                    <small class="text-muted d-block mb-2">Selecione uma foto nítida e sem acessórios no rosto.</small>
+                                    {{ form.profile_photo }}
+                                </div>
+                            </div>
+
+                            <div class="tab-pane fade" id="panel-camera" role="tabpanel">
+                                <div class="p-3 border border-secondary border-opacity-25 rounded-3 bg-light text-center">
+                                    
+                                    <div id="camera-wrapper" class="position-relative overflow-hidden rounded-3 mb-3 bg-dark mx-auto" style="max-width: 320px; aspect-ratio: 3/4; display: none;">
+                                        <video id="webcam-video" autoplay playsinline class="w-100 h-100 object-fit-cover"></video>
+                                    </div>
+
+                                    <div id="preview-wrapper" class="position-relative overflow-hidden rounded-3 mb-3 bg-light mx-auto border" style="max-width: 320px; aspect-ratio: 3/4; display: none;">
+                                        <img id="photo-preview" class="w-100 h-100 object-fit-cover" src="">
+                                    </div>
+
+                                    <div id="camera-controls">
+                                        <button type="button" class="btn btn-primary fw-semibold rounded-pill px-4" id="btn-capture" onclick="takePhoto()">
+                                            📸 Capturar Rosto
+                                        </button>
+                                        <button type="button" class="btn btn-outline-secondary fw-semibold rounded-pill px-4" id="btn-retake" onclick="retakePhoto()" style="display: none;">
+                                            🔄 Tirar Outra
+                                        </button>
+                                    </div>
+                                    
+                                    <canvas id="photo-canvas" style="display: none;"></canvas>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        {% for error in form.profile_photo.errors %}
+                            <div class="text-danger small fw-medium mt-1">{{ error }}</div>
+                        {% endfor %}
                     </div>
 
-                    <div class="d-grid">
-                        <button type="submit" class="btn btn-success btn-lg">Concluir Cadastro</button>
+                    <div class="d-grid mt-4">
+                        <button type="submit" class="btn btn-success btn-lg fw-bold rounded-3 shadow-sm">Concluir Cadastro</button>
                     </div>
                 </form>
             </div>
@@ -68,11 +114,115 @@
 </div>
 
 <style>
-    input[type="text"], input[type="email"], input[type="password"] {
+    /* Estilização automática para os inputs do Django */
+    input[type="text"], input[type="email"], input[type="password"], input[type="file"] {
         width: 100%;
-        padding: 0.375rem 0.75rem;
-        border: 1px solid #ced4da;
-        border-radius: 0.375rem;
+        padding: 0.5rem 0.75rem;
+        border: 1px solid #dee2e6;
+        border-radius: 0.5rem;
+        background-color: #f8f9fa;
+        transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
+    }
+    input[type="text"]:focus, input[type="email"]:focus, input[type="password"]:focus {
+        background-color: #ffffff;
+        border-color: #0d6efd;
+        box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+        outline: 0;
+    }
+    .nav-pills .nav-link.active {
+        background-color: #0d6efd;
+        box-shadow: 0 2px 4px rgba(13,110,253,0.2);
+    }
+    .object-fit-cover {
+        object-fit: cover;
     }
 </style>
+
+<script>
+    let videoStream = null;
+    const videoElement = document.getElementById('webcam-video');
+    const canvasElement = document.getElementById('photo-canvas');
+    const previewElement = document.getElementById('photo-preview');
+    
+    const wrapperCamera = document.getElementById('camera-wrapper');
+    const wrapperPreview = document.getElementById('preview-wrapper');
+    
+    const btnCapture = document.getElementById('btn-capture');
+    const btnRetake = document.getElementById('btn-retake');
+
+    // o django costuma renderizar o input de arquivo com ID ou simplesmente a primeira tag input[type=file]
+    const fileInput = document.querySelector('input[type="file"]');
+
+    // LIGA A CÂMERA
+    async function startCamera() {
+        wrapperPreview.style.display = 'none';
+        btnRetake.style.display = 'none';
+        
+        wrapperCamera.style.display = 'block';
+        btnCapture.style.display = 'inline-block';
+
+        try {
+            // Prioriza câmera frontal (user) para cadastro, mas pode usar 'environment' se for o professor tirando a foto
+            videoStream = await navigator.mediaDevices.getUserMedia({ 
+                video: { facingMode: "user" } 
+            });
+            videoElement.srcObject = videoStream;
+        } catch (err) {
+            console.error("Erro ao acessar a câmera: ", err);
+            alert("Não foi possível acessar a câmera. Verifique as permissões do seu navegador.");
+        }
+    }
+
+    // DESLIGA A CÂMERA
+    function stopCamera() {
+        if (videoStream) {
+            videoStream.getTracks().forEach(track => track.stop());
+            videoStream = null;
+        }
+        wrapperCamera.style.display = 'none';
+    }
+
+    // TIRA A FOTO
+    function takePhoto() {
+        if (!videoStream) return;
+
+        // Ajusta o canvas para a resolução do vídeo
+        canvasElement.width = videoElement.videoWidth;
+        canvasElement.height = videoElement.videoHeight;
+        
+        // Desenha a imagem atual do vídeo no canvas
+        const ctx = canvasElement.getContext('2d');
+        ctx.drawImage(videoElement, 0, 0, canvasElement.width, canvasElement.height);
+
+        // Converte o canvas para um arquivo Blob (JPEG)
+        canvasElement.toBlob((blob) => {
+            // Mostra a imagem na tela para o usuário ver
+            const imageUrl = URL.createObjectURL(blob);
+            previewElement.src = imageUrl;
+            
+            // 2. Cria um Arquivo "Falso" com os dados do Blob
+            const fileName = `captura_${Date.now()}.jpg`;
+            const file = new File([blob], fileName, { type: "image/jpeg", lastModified: new Date().getTime() });
+            
+            // Injeta o arquivo no input de arquivo padrão do formulário do Django
+            const container = new DataTransfer();
+            container.items.add(file);
+            fileInput.files = container.files;
+
+            // Troca a UI
+            stopCamera();
+            wrapperPreview.style.display = 'block';
+            btnCapture.style.display = 'none';
+            btnRetake.style.display = 'inline-block';
+            
+        }, 'image/jpeg', 0.9); // 0.9 = 90% de qualidade
+    }
+
+    // TENTA TIRAR OUTRA FOTO
+    function retakePhoto() {
+        // Limpa o input file
+        fileInput.value = "";
+        startCamera();
+    }
+</script>
 {% endblock %}

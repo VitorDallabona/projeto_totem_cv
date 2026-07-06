@@ -9,6 +9,28 @@ from django.utils import timezone
 from datetime import timedelta, datetime, date
 from django.db.models import Count, Q
 from django.urls import reverse
+from django.views.decorators.csrf import csrf_exempt
+
+import json
+import cv2
+import asyncio
+from asgiref.sync import sync_to_async
+
+# --- IMPORTS DO WEBRTC ---
+from aiortc import RTCPeerConnection, RTCSessionDescription, MediaStreamTrack
+from av import VideoFrame
+
+# Importa a sua IA global (Certifique-se de que ela está sendo iniciada em algum lugar como no apps.py)
+try:
+    from students.ia import FaceRecognition
+    # Se a IA não estiver sendo instanciada em outro lugar (ex: no apps.py), inicie-a aqui:
+    if 'ia_system' not in globals():
+        print("Carregando Modelos de IA na GPU (WebRTC)...")
+        ia_system = FaceRecognition('media/faces')
+except ImportError as e:
+    print(f"⚠️ Aviso: Dependências da IA não carregadas no views.py: {e}")
+    ia_system = None
+
 
 def is_teacher(user):
     return hasattr(user, 'profile') and user.profile.is_teacher
@@ -225,3 +247,107 @@ def export_attendance_csv(request, class_id):
 def totem_display(request):
     """Renderiza a interface gráfica exclusiva do terminal biométrico (sem barras de navegação)"""
     return render(request, 'core/totem_display.html')
+
+
+# =========================================================================================
+# ==============================  MÓDULO WEBRTC (NÍVEL DEUS) ==============================
+# =========================================================================================
+
+# Precisamos guardar as conexões ativas na memória do servidor
+pcs = set()
+
+@csrf_exempt
+@csrf_exempt
+async def webrtc_offer(request):
+    """ Endpoint assíncrono que recebe o convite do celular e inicia o Streaming """
+    if request.method == "POST":
+        corpo = json.loads(request.body)
+        
+        offer = RTCSessionDescription(sdp=corpo["sdp"], type=corpo["type"])
+        class_id = corpo.get("class_id")
+
+        pc = RTCPeerConnection()
+        pcs.add(pc)
+
+        dc_ref = {"channel": None}
+
+        @pc.on("datachannel")
+        def on_datachannel(channel):
+            dc_ref["channel"] = channel
+            print(f"📡 Data Channel WebRTC aberto para turma {class_id}!")
+
+        @pc.on("track")
+        def on_track(track):
+            if track.kind == "video":
+                print("📹 Vídeo nativo recebido! Extraindo frames em tempo real...")
+                
+                latest_frame = None
+                correndo = True  # Flag de controle para matar os loops imediatamente
+
+                # 1. O LEITOR: Para assim que a câmara desliga
+                async def leitor_continuo():
+                    nonlocal latest_frame, correndo
+                    while correndo:
+                        try:
+                            latest_frame = await track.recv()
+                        except Exception:
+                            correndo = False
+                            break
+
+                # 2. A IA: Para imediatamente se o WebRTC fechar ou falhar
+                async def processador_ia():
+                    nonlocal latest_frame, correndo
+                    while correndo:
+                        try:
+                            if pc.connectionState in ["failed", "closed"]:
+                                correndo = False
+                                break
+
+                            if latest_frame is not None:
+                                frame_para_processar = latest_frame
+                                latest_frame = None 
+                                
+                                img = frame_para_processar.to_ndarray(format="bgr24")
+                                
+                                if ia_system is not None:
+                                    ia_system.LINHA_VIRTUAL_X = img.shape[1] // 2
+                                    resultado = await sync_to_async(ia_system.run_recognition_get_data)(img)
+                                    faces_out, deve_atualizar_tela = resultado
+
+                                    channel = dc_ref.get("channel")
+                                    if channel and channel.readyState == "open":
+                                        resposta = {
+                                            "status": "sucesso",
+                                            "faces": faces_out,
+                                            "image_w": img.shape[1],
+                                            "image_h": img.shape[0],
+                                            "atualizar_tela": deve_atualizar_tela
+                                        }
+                                        channel.send(json.dumps(resposta))
+                            else:
+                                await asyncio.sleep(0.02)
+                        except Exception as e:
+                            print(f"Erro no loop da IA: {e}")
+                            correndo = False
+                            break
+
+                # Inicia as duas tarefas em segundo plano
+                asyncio.create_task(leitor_continuo())
+                asyncio.create_task(processador_ia())
+
+        @pc.on("connectionstatechange")
+        async def on_connectionstatechange():
+            print("Status WebRTC:", pc.connectionState)
+            if pc.connectionState in ["failed", "closed"]:
+                pcs.discard(pc)
+
+        await pc.setRemoteDescription(offer)
+        answer = await pc.createAnswer()
+        await pc.setLocalDescription(answer)
+
+        return JsonResponse({
+            "sdp": pc.localDescription.sdp,
+            "type": pc.localDescription.type
+        })
+    
+    return JsonResponse({"erro": "Apenas POST permitido"})

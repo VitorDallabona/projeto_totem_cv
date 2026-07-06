@@ -16,7 +16,7 @@ lightdsa>=0.0.3
 lightphe>=0.0.15
 mtcnn>=0.1.0
 numpy==2.4.4
-opencv-python==4.13.0.92
+opencv-contrib-python
 pandas>=0.23.4
 Pillow==12.2.0
 python-dotenv>=1.0.1

@@ -8,4 +8,5 @@ urlpatterns = [
     path('terminal-totem/', views.totem_display, name='totem_display'),
     path('class/<int:class_id>/start/', views.start_class, name='start_class'),
     path('class/<int:class_id>/end/', views.end_class, name='end_class'),
+    path('webrtc_offer/', views.webrtc_offer, name='webrtc_offer'),
 ]

@@ -439,10 +439,22 @@
                 animationId = requestAnimationFrame(renderLoop);
 
                 // --- 2. INICIA A CONEXÃO WEBRTC ---
-                peerConnection = new RTCPeerConnection();
+                // Configuração com servidores STUN públicos da Google para melhor conectividade externa e transposição de NAT (NAT Traversal)
+                const webrtcConfig = {
+                    iceServers: [
+                        { urls: 'stun:stun.l.google.com:19302' },
+                        { urls: 'stun:stun1.l.google.com:19302' },
+                        { urls: 'stun:stun2.l.google.com:19302' }
+                    ]
+                };
+                peerConnection = new RTCPeerConnection(webrtcConfig);
 
                 // 3. Cria o "Data Channel" (O tubo de dados para receber os JSONs da IA)
-                dataChannel = peerConnection.createDataChannel('chat');
+                // Otimizado para latência: sem ordem (unordered) e sem retransmissões (unreliable)
+                dataChannel = peerConnection.createDataChannel('chat', {
+                    ordered: false,
+                    maxRetransmits: 0
+                });
                 
                 dataChannel.onmessage = (event) => {
                     const data = JSON.parse(event.data);
@@ -541,7 +553,8 @@
                     body: JSON.stringify({
                         sdp: peerConnection.localDescription.sdp,
                         type: peerConnection.localDescription.type,
-                        class_id: classId
+                        class_id: classId,
+                        camera_mode: modeSelect.value
                     })
                 });
 
@@ -574,18 +587,22 @@
     const videoRatio = lastImageW / lastImageH;
     const overlayRatio = overlay.width / overlay.height;
     
-    // Calcula a escala correta para o vídeo caber no container sem distorcer
+    // Calcula a escala correta para o vídeo preencher o container (object-fit: cover)
     let drawWidth, drawHeight, offsetX, offsetY;
     if (videoRatio > overlayRatio) {
-        drawWidth = overlay.width;
-        drawHeight = overlay.width / videoRatio;
-        offsetX = 0;
-        offsetY = (overlay.height - drawHeight) / 2;
-    } else {
+        // O vídeo é mais largo do que a proporção do container.
+        // O vídeo preenche a altura inteira do container e transborda/corta nas laterais.
         drawHeight = overlay.height;
         drawWidth = overlay.height * videoRatio;
         offsetX = (overlay.width - drawWidth) / 2;
         offsetY = 0;
+    } else {
+        // O vídeo é mais alto do que a proporção do container.
+        // O vídeo preenche a largura inteira do container e transborda/corta no topo e base.
+        drawWidth = overlay.width;
+        drawHeight = overlay.width / videoRatio;
+        offsetX = 0;
+        offsetY = (overlay.height - drawHeight) / 2;
     }
 
     const scaleX = drawWidth / lastImageW;

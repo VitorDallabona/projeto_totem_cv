@@ -132,6 +132,31 @@ def _convert_numpy(obj):
 
 
 # ---------------------------------------------------------------------------
+# Nitidez helper
+# ---------------------------------------------------------------------------
+
+def calcular_nitidez(img_bgr: np.ndarray, bbox: tuple) -> float:
+    """
+    Calculate the Laplacian variance of the cropped face area to estimate sharpness.
+    """
+    left, top, right, bottom = bbox
+    h, w = img_bgr.shape[:2]
+    left = max(0, left)
+    top = max(0, top)
+    right = min(w, right)
+    bottom = min(h, bottom)
+    
+    if right <= left or bottom <= top:
+        return 0.0
+        
+    crop = img_bgr[top:bottom, left:right]
+    if crop.size == 0:
+        return 0.0
+    gray = cv.cvtColor(crop, cv.COLOR_BGR2GRAY)
+    return float(cv.Laplacian(gray, cv.CV_64F).var())
+
+
+# ---------------------------------------------------------------------------
 # Embedding buffer — motion robustness core
 # ---------------------------------------------------------------------------
 
@@ -230,6 +255,46 @@ def salvar_registro_acesso(nome_aluno: str, direcao: str, liveness_score: float 
         return False
 
 
+def registrar_chamada_inicial(nome_aluno: str, liveness_score: float = 0.95) -> bool:
+    """
+    Registers a student's presence (ENTRADA) for the active class.
+    Only creates a record if the student hasn't entered today yet.
+    """
+    try:
+        from django.utils import timezone
+        student = Student.objects.filter(user__username=nome_aluno).first()
+        if not student:
+            return False
+        classroom = Classroom.objects.filter(active_now=True).first()
+        if not classroom or student not in classroom.enrolled_students.all():
+            return False
+        
+        # Verifica se já existe um registro de ENTRADA hoje
+        hoje = timezone.localtime(timezone.now()).date()
+        ja_registrado = Attendance.objects.filter(
+            student=student,
+            classroom=classroom,
+            direction='ENTRADA',
+            timestamp__date=hoje
+        ).exists()
+        
+        if ja_registrado:
+            return False  # Já registrado hoje, ignora para não spammar
+            
+        Attendance.objects.create(
+            student=student,
+            classroom=classroom,
+            liveness_score=liveness_score,
+            is_valid=True,
+            direction='ENTRADA',
+        )
+        logger.info("✓ [CHAMADA] %s registrado como PRESENTE (ENTRADA)", student.user.get_full_name())
+        return True
+    except Exception:
+        logger.exception("[ERRO] Falha ao salvar chamada inicial")
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Main recognition class
 # ---------------------------------------------------------------------------
@@ -305,6 +370,7 @@ class FaceRecognition:
         self.liveness_cache: dict[str, dict] = {}
         self.verified_cache: set[str] = set()
         self.posicoes_anteriores: dict[str, int] = {}
+        self.absent_counters: dict[str, int] = {}
 
         self.teve_mudanca_banco: bool = False
         self.last_faces_data: list[dict] = []
@@ -325,6 +391,7 @@ class FaceRecognition:
         self.liveness_cache.clear()
         self.verified_cache.clear()
         self.posicoes_anteriores.clear()
+        self.absent_counters.clear()
         self._buffers.clear()
         self.adaptive_threshold.clear()
         logger.info("[IA] Banco de rostos atualizado: %d identidades", len(self.knownFaceNames))
@@ -436,19 +503,30 @@ class FaceRecognition:
         return movimento
 
     def _evict_absent_names(self, names_visible: set[str]):
-        absent = set(self.liveness_cache) - names_visible
+        # Reseta o contador para nomes visíveis no frame atual
+        for name in names_visible:
+            self.absent_counters[name] = 0
+
+        # Identifica todos os nomes atualmente cacheados que estão ausentes neste frame
+        todos_cacheados = set(self.liveness_cache.keys()) | set(self.posicoes_anteriores.keys())
+        absent = todos_cacheados - names_visible
+
         for name in absent:
-            self.liveness_cache.pop(name, None)
-            self.posicoes_anteriores.pop(name, None)
-            # verified_cache is intentionally NOT cleared here — a confirmed
-            # identity that briefly exits (head turn, blink) should not be
-            # forced through 4-frame liveness again on return.
+            # Incrementa o contador de ausência consecutiva
+            self.absent_counters[name] = self.absent_counters.get(name, 0) + 1
+            
+            # Tolerância de 12 frames (~400ms a 30 FPS) para viradas rápidas de cabeça, desfoques ou piscadas
+            if self.absent_counters[name] >= 12:
+                self.liveness_cache.pop(name, None)
+                self.posicoes_anteriores.pop(name, None)
+                self.absent_counters.pop(name, None)
+            # O verified_cache é intencionalmente mantido para evitar forçar novo liveness de 4 frames.
 
     # ------------------------------------------------------------------
     # Core processing
     # ------------------------------------------------------------------
 
-    def run_recognition(self, frame: np.ndarray, frame_offset: tuple = (0, 0)) -> np.ndarray:
+    def run_recognition(self, frame: np.ndarray, camera_mode: str = "totem", frame_offset: tuple = (0, 0)) -> np.ndarray:
         h, w = frame.shape[:2]
         linha_x = w // 2
 
@@ -470,10 +548,21 @@ class FaceRecognition:
 
             det_score = float(getattr(face, "det_score", 1.0))
             buf = self._get_or_create_buffer(bbox)
-            buf.push(face.embedding, det_score)
+            
+            # Filtro de nitidez (descarte de frames borrados para assertividade em movimento)
+            # Reduzido para 25.0 (ideal para webcams/celulares comuns e perfil de rosto)
+            nitidez = calcular_nitidez(frame, bbox)
+            if nitidez >= 25.0:
+                buf.push(face.embedding, det_score)
+            else:
+                logger.debug(f"[IA] Frame descartado por desfoque de movimento (nitidez: {nitidez:.1f} < 25.0)")
 
             avg_emb = buf.get_average()
-            nome, score = self._identificar(avg_emb)
+            if avg_emb is not None:
+                nome, score = self._identificar(avg_emb)
+            else:
+                # Fallback se o buffer ainda não tiver nenhum frame nítido
+                nome, score = self._identificar(face.embedding)
             detections.append((nome, score, bbox, buf.is_stable))
 
         # ── Step 2: remove stale buffers and absent identity caches ────────
@@ -495,10 +584,14 @@ class FaceRecognition:
                 if nome in self.verified_cache:
                     cor   = self._COR_APROVADO
                     texto = "Aprovado"
-                    movimento = self._verificar_cruzamento(nome, centro_x, linha_x)
-                    if movimento:
-                        if salvar_registro_acesso(nome, movimento, liveness_score=0.95):
+                    if camera_mode == "varredura":
+                        if registrar_chamada_inicial(nome):
                             self.teve_mudanca_banco = True
+                    else:
+                        movimento = self._verificar_cruzamento(nome, centro_x, linha_x)
+                        if movimento:
+                            if salvar_registro_acesso(nome, movimento, liveness_score=0.95):
+                                self.teve_mudanca_banco = True
                 else:
                     cache = self.liveness_cache.setdefault(nome, {"sucessos": 0})
 
@@ -512,10 +605,14 @@ class FaceRecognition:
                                 self.verified_cache.add(nome)
                                 cor   = self._COR_APROVADO
                                 texto = "Aprovado"
-                                movimento = self._verificar_cruzamento(nome, centro_x, linha_x)
-                                if movimento:
-                                    if salvar_registro_acesso(nome, movimento, liveness_score=0.95):
+                                if camera_mode == "varredura":
+                                    if registrar_chamada_inicial(nome):
                                         self.teve_mudanca_banco = True
+                                else:
+                                    movimento = self._verificar_cruzamento(nome, centro_x, linha_x)
+                                    if movimento:
+                                        if salvar_registro_acesso(nome, movimento, liveness_score=0.95):
+                                            self.teve_mudanca_banco = True
                             else:
                                 cor   = self._COR_AGUARDANDO
                                 texto = f"Confirme: {cache['sucessos']}/{self.LIVENESS_FRAMES_REQUIRED}"
@@ -548,7 +645,7 @@ class FaceRecognition:
         return frame
 
     def run_recognition_get_data(
-        self, frame: np.ndarray, frame_offset: tuple = (0, 0)
+        self, frame: np.ndarray, camera_mode: str = "totem", frame_offset: tuple = (0, 0)
     ) -> tuple[list[dict], bool]:
         """
         Entry point for the WebRTC / REST pipeline.
@@ -559,7 +656,7 @@ class FaceRecognition:
         teve_mudanca : True if at least one attendance record was written
         """
         self.teve_mudanca_banco = False
-        self.run_recognition(frame, frame_offset=frame_offset)
+        self.run_recognition(frame, camera_mode=camera_mode, frame_offset=frame_offset)
         return self.last_faces_data, self.teve_mudanca_banco
 
 

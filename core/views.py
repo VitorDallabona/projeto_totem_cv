@@ -208,6 +208,7 @@ async def webrtc_offer(request):
         
         offer = RTCSessionDescription(sdp=corpo["sdp"], type=corpo["type"])
         class_id = corpo.get("class_id")
+        camera_mode = corpo.get("camera_mode", "totem")
 
         pc = RTCPeerConnection()
         pcs.add(pc)
@@ -263,7 +264,8 @@ async def webrtc_offer(request):
                                 resultado = await loop.run_in_executor(
                                     ia_executor, 
                                     ia_system.run_recognition_get_data, 
-                                    img
+                                    img,
+                                    camera_mode
                                 )
                                 faces_out, deve_atualizar_tela = resultado
 

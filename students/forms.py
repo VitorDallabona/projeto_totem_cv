@@ -4,6 +4,10 @@ from .models import Student
 from .models import Classroom
 
 
+class MultipleFileInput(forms.ClearableFileInput):
+    allow_multiple_selected = True
+
+
 class StudentRegistrationForm(forms.ModelForm):
     first_name = forms.CharField(max_length=30)
     last_name = forms.CharField(max_length=30)
@@ -13,6 +17,9 @@ class StudentRegistrationForm(forms.ModelForm):
     class Meta:
         model = Student
         fields = ['registration_id', 'profile_photo']
+        widgets = {
+            'profile_photo': MultipleFileInput(attrs={'multiple': True, 'id': 'profile_photo'}),
+        }
         
         error_messages = {
             'registration_id': {

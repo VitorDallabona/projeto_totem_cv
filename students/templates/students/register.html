@@ -1,71 +1,305 @@
 {% extends 'core/base.html' %}
 
 {% block content %}
-<div class="row justify-content-center mt-4">
-    <div class="col-md-6">
-        <div class="card shadow">
-            <div class="card-header bg-primary text-white text-center">
-                <h5 class="mb-0">Cadastro Biométrico de Aluno</h5>
+<div class="row justify-content-center mt-4 mb-5">
+    <div class="col-md-8 col-lg-6">
+        
+        {% if messages %}
+            {% for message in messages %}
+                <div class="alert alert-{% if message.tags == 'error' %}danger{% else %}{{ message.tags }}{% endif %} alert-dismissible fade show shadow-sm border-0 rounded-4" role="alert">
+                    <span class="fw-medium">{{ message }}</span>
+                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Fechar"></button>
+                </div>
+            {% endfor %}
+        {% endif %}
+
+        {% if error %}
+            <div class="alert alert-danger shadow-sm border-0 rounded-4 mb-4">{{ error }}</div>
+        {% endif %}
+
+        <div class="card border-0 shadow rounded-4 overflow-hidden">
+            <div class="card-header bg-primary text-white text-center py-3">
+                <h5 class="mb-0 fw-bold">Cadastro Biométrico de Aluno</h5>
             </div>
-            <div class="card-body">
-                
-                {% if messages %}
-                    {% for message in messages %}
-                        <div class="alert alert-{% if message.tags == 'error' %}danger{% else %}{{ message.tags }}{% endif %} alert-dismissible fade show" role="alert">
-                            {{ message }}
-                            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Fechar"></button>
-                        </div>
-                    {% endfor %}
-                {% endif %}
-
-                {% if error %}
-                    <div class="alert alert-danger">{{ error }}</div>
-                {% endif %}
-
-                <form method="post" enctype="multipart/form-data">
+            
+            <div class="card-body p-4">
+                <form method="post" enctype="multipart/form-data" id="photo-form">
                     {% csrf_token %}
+                    
+                    <h6 class="fw-bold text-dark border-bottom pb-2 mb-3">Informações Pessoais</h6>
                     
                     <div class="row">
                         <div class="col-md-6 mb-3">
-                            <label class="form-label">Nome:</label>
+                            <label class="form-label fw-semibold text-secondary small text-uppercase">Nome:</label>
                             {{ form.first_name }}
                         </div>
                         <div class="col-md-6 mb-3">
-                            <label class="form-label">Sobrenome:</label>
+                            <label class="form-label fw-semibold text-secondary small text-uppercase">Sobrenome:</label>
                             {{ form.last_name }}
                         </div>
                     </div>
 
                     <div class="mb-3">
-                        <label class="form-label">Matrícula:</label>
+                        <label class="form-label fw-semibold text-secondary small text-uppercase">Matrícula:</label>
                         {{ form.registration_id }}
                     </div>
 
                     <div class="mb-3">
-                        <label class="form-label">Email:</label>
+                        <label class="form-label fw-semibold text-secondary small text-uppercase">Email:</label>
                         {{ form.email }}
                     </div>
 
                     <div class="mb-3">
-                        <label class="form-label">Senha:</label>
+                        <label class="form-label fw-semibold text-secondary small text-uppercase">Senha:</label>
                         {{ form.password }}
                     </div>
 
-                    <div class="mb-4">
-                        <label class="form-label fw-bold">Foto para Reconhecimento Facial:</label>
-                        <br>
-                        <small class="text-muted d-block mb-2">Envie uma foto do seu rosto bem iluminada e sem óculos escuros ou máscara.</small>
-                        {{ form.profile_photo }}
+                    <h6 class="fw-bold text-dark border-bottom pb-2 mt-4 mb-3">Biometria Facial (Padrão: 3 Fotos)</h6>
+                    <p class="text-muted small mb-3">O sistema requer exatamente 3 fotos em posições diferentes para registrar sua biometria facial com alta precisão.</p>
+
+                    <ul class="nav nav-pills nav-fill bg-light rounded-3 p-1 mb-3" id="photoTabs" role="tablist">
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link active fw-semibold rounded-3 text-secondary" id="upload-tab" type="button" role="tab">📁 Fazer Upload</button>
+                        </li>
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link fw-semibold rounded-3 text-secondary" id="camera-tab" type="button" role="tab">📷 Tirar Foto</button>
+                        </li>
+                    </ul>
+
+                    <div id="capture-counter" class="text-primary fw-bold mb-2">
+                        Fotos capturadas: 0/3
+                    </div>
+                    
+                    <div id="pose-instruction" class="alert alert-info fw-bold py-2 mb-3" style="font-size: 0.9rem;">
+                        Posição 1/3: Olhe diretamente para a câmera (Foto Frontal)
                     </div>
 
-                    <div class="d-grid">
-                        <button type="submit" class="btn btn-success btn-lg">Concluir Cadastro</button>
+                    <div class="tab-content" id="photoTabsContent">
+                        
+                        <!-- Aba de Upload -->
+                        <div class="tab-pane fade show active text-start" id="upload-pane" role="tabpanel" tabindex="0">
+                            <label class="form-label fw-semibold text-secondary small text-uppercase" style="letter-spacing: 0.5px;">Selecione os Arquivos (Envie as 3 Posições)</label>
+                            {{ form.profile_photo }}
+                            <small class="text-muted d-block mt-2">Segure Ctrl (ou Cmd) para selecionar as 3 fotos de uma vez (uma de frente, uma perfil direito e uma perfil esquerdo).</small>
+                        </div>
+                        
+                        <!-- Aba de Câmera -->
+                        <div class="tab-pane fade" id="camera-pane" role="tabpanel" tabindex="0">
+                            <div class="bg-dark rounded-3 overflow-hidden position-relative mb-3 d-flex align-items-center justify-content-center" style="height: 250px; width: 100%;">
+                                <video id="camera-feed" autoplay playsinline style="width: 100%; height: 100%; object-fit: cover; display: none;"></video>
+                                <img id="camera-preview" style="width: 100%; height: 100%; object-fit: cover; display: none; border-radius: 8px;">
+                                <canvas id="camera-canvas" style="display: none;"></canvas>
+                                
+                                <button type="button" id="btn-start-camera" class="btn btn-light shadow-sm fw-bold position-absolute">Ativar Câmera</button>
+                            </div>
+                            
+                            <div class="d-flex gap-2 justify-content-center mb-3">
+                                <button type="button" id="btn-capture" class="btn btn-success fw-semibold w-100 shadow-sm" style="display: none;">📸 Capturar 1/3 (Frente)</button>
+                                <button type="button" id="btn-retake" class="btn btn-secondary fw-semibold w-100 shadow-sm" style="display: none;">🔄 Tentar Novamente</button>
+                            </div>
+                        </div>
+
+                    </div>
+
+                    <div class="d-grid mt-4 border-top pt-4">
+                        <button type="submit" class="btn btn-success btn-lg fw-bold shadow-sm" id="btn-submit">Concluir Cadastro</button>
                     </div>
                 </form>
             </div>
         </div>
     </div>
 </div>
+
+<script>
+    document.addEventListener("DOMContentLoaded", function() {
+        // Elementos das Abas
+        const cameraTab = document.getElementById('camera-tab');
+        const uploadTab = document.getElementById('upload-tab');
+        const uploadPane = document.getElementById('upload-pane');
+        const cameraPane = document.getElementById('camera-pane');
+        
+        // Elementos do Formulário e Câmera
+        const fileInput = document.getElementById('profile_photo');
+        const btnSubmit = document.getElementById('btn-submit');
+        const form = document.getElementById('photo-form');
+        const video = document.getElementById('camera-feed');
+        const canvas = document.getElementById('camera-canvas');
+        const preview = document.getElementById('camera-preview');
+        const btnStart = document.getElementById('btn-start-camera');
+        const btnCapture = document.getElementById('btn-capture');
+        const btnRetake = document.getElementById('btn-retake');
+        const instDiv = document.getElementById('pose-instruction');
+        const counterDiv = document.getElementById('capture-counter');
+        
+        let stream = null;
+        let capturedFiles = [];
+
+        function atualizarInstrucoes() {
+            const count = capturedFiles.length;
+            counterDiv.innerText = `Fotos capturadas: ${count}/3`;
+            
+            if (count === 0) {
+                instDiv.className = "alert alert-info fw-bold py-2 mb-3";
+                instDiv.innerText = "Posição 1/3: Olhe diretamente para a câmera (Foto Frontal)";
+                btnCapture.innerText = "📸 Capturar 1/3 (Frente)";
+                btnRetake.style.display = "none";
+                btnCapture.disabled = false;
+            } else if (count === 1) {
+                instDiv.className = "alert alert-warning fw-bold py-2 mb-3";
+                instDiv.innerText = "Posição 2/3: Gire a cabeça ligeiramente para a DIREITA";
+                btnCapture.innerText = "📸 Capturar 2/3 (Lado Direito)";
+                btnRetake.style.display = "block";
+                btnCapture.disabled = false;
+            } else if (count === 2) {
+                instDiv.className = "alert alert-warning fw-bold py-2 mb-3";
+                instDiv.innerText = "Posição 3/3: Gire a cabeça ligeiramente para a ESQUERDA";
+                btnCapture.innerText = "📸 Capturar 3/3 (Lado Esquerdo)";
+                btnRetake.style.display = "block";
+                btnCapture.disabled = false;
+            } else {
+                instDiv.className = "alert alert-success fw-bold py-2 mb-3";
+                instDiv.innerText = "✅ Tudo pronto! 3 fotos capturadas com sucesso.";
+                btnCapture.innerText = "✅ 3 Fotos Capturadas";
+                btnCapture.disabled = true;
+                btnRetake.style.display = "block";
+            }
+        }
+
+        // Função para ligar a câmera
+        async function startCamera() {
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
+                video.srcObject = stream;
+                video.style.display = "block";
+                preview.style.display = "none";
+                btnStart.style.display = "none";
+                btnCapture.style.display = "block";
+                btnRetake.style.display = "none";
+            } catch (err) {
+                alert("Erro ao acessar a câmera: " + err.message);
+            }
+        }
+
+        // Função para desligar a câmera
+        function stopCamera() {
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+                stream = null;
+            }
+            video.srcObject = null;
+            video.style.display = "none";
+            btnCapture.style.display = "none";
+            btnStart.style.display = "block";
+        }
+
+        // Inicia a câmera ao clicar no botão
+        btnStart.addEventListener('click', startCamera);
+
+        btnCapture.addEventListener('click', function() {
+            if (capturedFiles.length >= 3) {
+                return;
+            }
+
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+
+            canvas.getContext('2d').drawImage(
+                video,
+                0,
+                0,
+                canvas.width,
+                canvas.height
+            );
+
+            canvas.toBlob(function(blob) {
+                const file = new File(
+                    [blob],
+                    `camera_capture_${capturedFiles.length + 1}.jpg`,
+                    { type: "image/jpeg" }
+                );
+
+                capturedFiles.push(file);
+                atualizarInstrucoes();
+
+                const previewUrl = URL.createObjectURL(blob);
+                preview.src = previewUrl;
+                preview.style.display = "block";
+
+                setTimeout(() => {
+                    preview.style.display = "none";
+                }, 800);
+
+                if (capturedFiles.length >= 3) {
+                    const dt = new DataTransfer();
+                    capturedFiles.forEach(f => {
+                        dt.items.add(f);
+                    });
+                    fileInput.files = dt.files;
+                    stopCamera();
+                }
+            }, 'image/jpeg', 0.95);
+        });
+
+        // Tentar novamente
+        btnRetake.addEventListener('click', function() {
+            capturedFiles = [];
+            fileInput.value = "";
+            atualizarInstrucoes();
+            btnStart.style.display = "block";
+            startCamera();
+        });
+
+        // --- SISTEMA MANUAL DE TROCA DE ABAS ---
+        uploadTab.addEventListener('click', function() {
+            uploadTab.classList.add('active');
+            cameraTab.classList.remove('active');
+            
+            uploadPane.classList.add('show', 'active');
+            cameraPane.classList.remove('show', 'active');
+
+            stopCamera();
+            preview.style.display = "none";
+            btnRetake.style.display = "none";
+            fileInput.value = ""; 
+            capturedFiles = [];
+            atualizarInstrucoes();
+        });
+
+        cameraTab.addEventListener('click', function() {
+            cameraTab.classList.add('active');
+            uploadTab.classList.remove('active');
+            
+            cameraPane.classList.add('show', 'active');
+            uploadPane.classList.remove('show', 'active');
+
+            fileInput.value = ""; 
+            capturedFiles = [];
+            atualizarInstrucoes();
+            btnStart.style.display = "block";
+        });
+
+        // Proteção: não envia o formulário se o input estiver vazio
+        form.addEventListener('submit', function(e) {
+            if (cameraPane.classList.contains('active') && capturedFiles.length < 3) {
+                e.preventDefault();
+                alert(`Capture as 3 fotos antes de enviar (${capturedFiles.length}/3).`);
+                return;
+            }
+
+            if (uploadPane.classList.contains('active') && fileInput.files.length === 0) {
+                e.preventDefault();
+                alert("Selecione as fotos para upload.");
+                return;
+            }
+
+            btnSubmit.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Cadastrando Aluno e Processando Biometria...';
+            btnSubmit.disabled = true;
+        });
+
+        // Inicializa instruções
+        atualizarInstrucoes();
+    });
+</script>
 
 <style>
     input[type="text"], input[type="email"], input[type="password"] {
@@ -74,5 +308,9 @@
         border: 1px solid #ced4da;
         border-radius: 0.375rem;
     }
+    .nav-pills .nav-link { border-radius: 0.5rem; transition: all 0.3s ease; }
+    .nav-pills .nav-link.active { background-color: #fff; color: #0d6efd !important; box-shadow: 0 0.125rem 0.25rem rgba(0,0,0,0.075); }
+    .tab-pane { display: none; }
+    .tab-pane.active { display: block; }
 </style>
 {% endblock %}

@@ -355,6 +355,39 @@
         return (1 - amt) * start + amt * end;
     }
 
+    // Auxiliar para reordenar os codecs no SDP e priorizar H.264 (aceleração por hardware)
+    function preferH264(sdp) {
+        let lines = sdp.split('\r\n');
+        let mLineIdx = -1;
+        for (let i = 0; i < lines.length; i++) {
+            if (lines[i].indexOf('m=video') === 0) {
+                mLineIdx = i;
+                break;
+            }
+        }
+        if (mLineIdx === -1) return sdp;
+
+        let mLineElements = lines[mLineIdx].split(' ');
+        let rtpmapH264 = [];
+        
+        for (let i = 0; i < lines.length; i++) {
+            if (lines[i].indexOf('a=rtpmap:') === 0 && lines[i].toLowerCase().indexOf('h264') !== -1) {
+                let payload = lines[i].split(':')[1].split(' ')[0];
+                rtpmapH264.push(payload);
+            }
+        }
+
+        if (rtpmapH264.length === 0) return sdp;
+
+        let header = mLineElements.slice(0, 3);
+        let rest = mLineElements.slice(3);
+        
+        let newRest = rtpmapH264.concat(rest.filter(p => !rtpmapH264.includes(p)));
+        lines[mLineIdx] = header.concat(newRest).join(' ');
+
+        return lines.join('\r\n');
+    }
+
     async function toggleCamera() {
         const container = document.getElementById('camera-container');
         const toggle = document.getElementById('camSwitch');
@@ -415,20 +448,20 @@
                 let constraints = { video: {} };
                 
                 if (modeSelect.value === 'totem') {
-                    // MODO TOTEM: Webcam tradicional (Paisagem) - 720p (com mínimo de 480p)
+                    // MODO TOTEM: Webcam tradicional (Paisagem) - Proporção nativa 16:9 sem zoom/recorte
                     constraints.video = {
                         facingMode: "user",
                         width: { ideal: 1280, min: 640 },
                         height: { ideal: 720, min: 480 },
-                        frameRate: { ideal: 30, max: 30 } // Força o browser a enviar 30 quadros
+                        frameRate: { ideal: 24, max: 30 }
                     };
                 } else {
-                    // MODO VARREDURA: Celular em pé (Retrato) - 720p (com mínimo de 480p)
+                    // MODO VARREDURA: Celular em pé (Retrato) - Proporção nativa 9:16 sem zoom/recorte
                     constraints.video = {
                         facingMode: "environment",
                         width: { ideal: 720, min: 480 },
                         height: { ideal: 1280, min: 640 },
-                        frameRate: { ideal: 30, max: 30 } // Força o browser a enviar 30 quadros
+                        frameRate: { ideal: 24, max: 30 }
                     };
                 }
                 
@@ -521,6 +554,7 @@
                 };
 
                const tracks = videoStream.getTracks();
+                const scaleFactor = modeSelect.value === 'totem' ? 1.5 : 2.0; // Totem = downscale de 1.5 (~320p), Celular = downscale de 2.0 (~240p)
                 for (const track of tracks) {
                     peerConnection.addTrack(track, videoStream);
                     
@@ -533,17 +567,19 @@
                             try {
                                 const params = sender.getParameters();
                                 if (!params.encodings) params.encodings = [{}];
-                                params.encodings[0].maxFramerate = 30;
+                                params.encodings[0].maxFramerate = 24; // 24 FPS é fluido e consome menos processamento
+                                params.encodings[0].scaleResolutionDownBy = scaleFactor; // Reduz a resolução enviada pela metade ou mais
                                 await sender.setParameters(params);
-                                console.log("✅ FrameRate forçado para 30 FPS");
+                                console.log(`✅ WebRTC: FPS=24, scaleResolutionDownBy=${scaleFactor} aplicado`);
                             } catch (e) {
-                                console.warn("⚠️ Não foi possível forçar o FrameRate:", e);
+                                console.warn("⚠️ Não foi possível forçar os parâmetros de codificação:", e);
                             }
                         }
                     }
                 }
                 // 5. O Aperto de Mãos (SDP Offer)
                 const offer = await peerConnection.createOffer();
+                offer.sdp = preferH264(offer.sdp); // Força codec H.264
                 await peerConnection.setLocalDescription(offer);
 
                 // Envia a oferta para a nova rota Python que criamos

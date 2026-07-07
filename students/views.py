@@ -120,34 +120,74 @@ def register_student(request):
             student.user = user
             
             try:
-                uploaded_file = request.FILES['profile_photo']
-                img = Image.open(uploaded_file)
-                img = ImageOps.exif_transpose(img).convert('RGB')
-                img_array = np.array(img)
-                
-                img_bgr = cv.cvtColor(img_array, cv.COLOR_RGB2BGR)
-                
-                # 1. APLICA CLAHE ANTES DA EXTRAÇÃO
-                img_bgr_norm = normalizar_iluminacao(img_bgr)
-                faces = face_app.get(img_bgr_norm)
-                
-                if len(faces) > 0:
-                    # 2. GARANTE QUE O VETOR SEJA UNITÁRIO
-                    emb = faces[0].embedding
-                    n = norm(emb)
-                    emb_norm = emb / n if n > 0 else emb
+                # Alterado para aceitar múltiplas fotos
+                files = request.FILES.getlist('profile_photo')
+                if not files:
+                    raise ValueError("Nenhuma foto enviada.")
+
+                embeddings_coletados = []
+                pesos_coletados = []
+                ultima_foto_salva = None
+
+                for photo in files:
+                    img = Image.open(photo)
+                    img = ImageOps.exif_transpose(img).convert('RGB')
+                    img_array = np.array(img)
+                    img_bgr = cv.cvtColor(img_array, cv.COLOR_RGB2BGR)
                     
-                    student.face_encoding = emb_norm.tolist() 
+                    # 1. APLICA CLAHE EM CADA FOTO ENVIADA
+                    img_bgr_norm = normalizar_iluminacao(img_bgr)
+                    faces = face_app.get(img_bgr_norm)
+                    
+                    if faces:
+                        face = faces[0]
+                        emb = face.embedding
+                        n = norm(emb)
+                        emb_norm = emb / n if n > 0 else emb
+                        
+                        embeddings_coletados.append(emb_norm)
+                        pesos_coletados.append(max(float(getattr(face, "det_score", 1.0)), 1e-6))
+                        ultima_foto_salva = photo
+
+                if embeddings_coletados:
+                    # Salva a lista de todos os embeddings coletados para comparação Multi-Template
+                    embeddings_salvar = [emb.tolist() for emb in embeddings_coletados]
+                    
+                    student.profile_photo = ultima_foto_salva
+                    student.face_encoding = embeddings_salvar
                     student.save()
+
+                    # Injeta a biometria no cache consolidado
+                    caminho_cache = os.path.join(settings.MEDIA_ROOT, 'faces', 'encodes.json')
+                    if os.path.exists(caminho_cache):
+                        try:
+                            with open(caminho_cache, 'r') as f:
+                                cache_ia = json.load(f)
+                            
+                            # Limpa chaves antigas com ou sem extensão
+                            chaves_para_remover = [k for k in cache_ia if k == matricula or os.path.splitext(k)[0] == matricula]
+                            for k in chaves_para_remover:
+                                del cache_ia[k]
+                            
+                            # Grava usando a matrícula limpa como chave e a lista de embeddings
+                            cache_ia[matricula] = embeddings_salvar
+                            with open(caminho_cache, 'w') as f:
+                                json.dump(cache_ia, f, indent=4)
+                                
+                            if 'ia_system' in globals() and ia_system is not None and hasattr(ia_system, 'atualizar_banco_rostos'):
+                                ia_system.atualizar_banco_rostos()
+                        except Exception as e:
+                            print(f"Erro ao injetar biometria no cache: {e}")
+
                     messages.success(request, 'Cadastro realizado com sucesso! Faça login abaixo para continuar.')
                     return redirect('login') 
                 else:
                     user.delete()
-                    messages.error(request, 'Rosto não detectado. Envie uma foto nítida e bem iluminada.')
+                    messages.error(request, 'Rosto não detectado nas fotos. Envie fotos nítidas e bem iluminadas.')
                     return render(request, 'students/register.html', {'form': form})
             except Exception as e:
                 user.delete()
-                messages.error(request, f'Erro ao processar a imagem: {str(e)}')
+                messages.error(request, f'Erro ao processar as imagens: {str(e)}')
                 return render(request, 'students/register.html', {'form': form})
         else:
             for field, erros in form.errors.items():
@@ -202,13 +242,8 @@ def update_student_photo(request, student_id):
                     ultima_foto_salva = photo # Segura a referência para atualizar o avatar
             
             if embeddings_coletados:
-                # 2. MÉDIA PONDERADA POR QUALIDADE DA DETECÇÃO
-                weights = np.array(pesos_coletados, dtype=np.float32)
-                weights /= weights.sum()
-                embedding_medio = np.average(np.stack(embeddings_coletados), axis=0, weights=weights)
-                
-                n_final = norm(embedding_medio)
-                embedding_medio = (embedding_medio / n_final if n_final > 0 else embedding_medio).tolist()
+                # Salva a lista de todos os embeddings coletados para comparação Multi-Template
+                embeddings_salvar = [emb.tolist() for emb in embeddings_coletados]
                 
                 # Limpeza de fotos antigas no disco
                 if student.profile_photo:
@@ -223,7 +258,7 @@ def update_student_photo(request, student_id):
                         print(f"Erro ao limpar arquivos antigos no disco: {e}")
                 
                 student.profile_photo = ultima_foto_salva
-                student.face_encoding = embedding_medio
+                student.face_encoding = embeddings_salvar
                 student.save() 
                 
                 caminho_cache = os.path.join(settings.MEDIA_ROOT, 'faces', 'encodes.json')
@@ -232,12 +267,13 @@ def update_student_photo(request, student_id):
                         with open(caminho_cache, 'r') as f:
                             cache_ia = json.load(f)
                         
-                        chaves_para_remover = [k for k in cache_ia if os.path.splitext(k)[0] == matricula]
+                        # Limpa chaves antigas com ou sem extensão
+                        chaves_para_remover = [k for k in cache_ia if k == matricula or os.path.splitext(k)[0] == matricula]
                         for k in chaves_para_remover: del cache_ia[k]
                         
-                        nome_arquivo_salvo = os.path.basename(student.profile_photo.name)
-                        cache_ia[nome_arquivo_salvo] = embedding_medio
-                        with open(caminho_cache, 'w') as f: json.dump(cache_ia, f)
+                        # Grava usando a matrícula limpa como chave e a lista de embeddings
+                        cache_ia[matricula] = embeddings_salvar
+                        with open(caminho_cache, 'w') as f: json.dump(cache_ia, f, indent=4)
                             
                         if 'ia_system' in globals() and ia_system is not None and hasattr(ia_system, 'atualizar_banco_rostos'):
                             ia_system.atualizar_banco_rostos()

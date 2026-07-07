@@ -552,7 +552,7 @@ class FaceRecognition:
             # Filtro de nitidez (descarte de frames borrados para assertividade em movimento)
             # Reduzido para 25.0 (ideal para webcams/celulares comuns e perfil de rosto)
             nitidez = calcular_nitidez(frame, bbox)
-            if nitidez >= 25.0:
+            if nitidez >= 75.0:
                 buf.push(face.embedding, det_score)
             else:
                 logger.debug(f"[IA] Frame descartado por desfoque de movimento (nitidez: {nitidez:.1f} < 25.0)")

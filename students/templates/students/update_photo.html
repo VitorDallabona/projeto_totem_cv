@@ -52,13 +52,12 @@
                     <div class="tab-content" id="photoTabsContent">
                         
                         <div class="tab-pane fade show active text-start" id="upload-pane" role="tabpanel" tabindex="0">
-                            <label class="form-label fw-semibold text-secondary small text-uppercase" style="letter-spacing: 0.5px;">Selecione o Arquivo</label>
-                            <input class="form-control bg-light border-0 mb-4"
-                            type="file"
-                            id="new_photo"
-                            name="new_photo"
-                            accept="image/*"
-                            multiple>
+                            <label class="form-label fw-semibold text-secondary small text-uppercase" style="letter-spacing: 0.5px;">Selecione o Arquivo (Envie as 3 Posições)</label>
+                            <button type="button" id="btn-select-upload" class="btn btn-outline-primary fw-semibold w-100 py-3 mb-2 rounded-3" style="border-style: dashed; border-width: 2px;">
+                                📁 Selecionar Fotos no Computador
+                            </button>
+                            <div id="upload-file-list" class="text-muted small mt-1 fw-medium mb-3">Nenhum arquivo selecionado.</div>
+                            <small class="text-muted d-block mt-2">Segure Ctrl (ou Cmd) para selecionar as 3 fotos de uma vez (uma de frente, uma perfil direito e uma perfil esquerdo).</small>
                         </div>
                         
                         <div class="tab-pane fade" id="camera-pane" role="tabpanel" tabindex="0">
@@ -82,6 +81,11 @@
                         <div class="alert alert-danger text-start py-2 mb-4">{{ error }}</div>
                     {% endif %}
                     
+                    <!-- Input de arquivo real oculto visualmente, mas visível/ativo no DOM para evitar bloqueios de segurança do navegador em abas ocultas -->
+                    <div style="position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden;">
+                        <input type="file" id="new_photo" name="new_photo" accept="image/*" multiple>
+                    </div>
+
                     <div class="d-flex gap-2 justify-content-center border-top pt-4">
                         <a href="javascript:history.back()" class="btn btn-light border border-secondary border-opacity-25 fw-semibold px-4 rounded-3 text-secondary w-50">Cancelar</a>
                         <button type="submit" class="btn btn-primary fw-semibold px-4 rounded-3 shadow-sm w-50" id="btn-submit">Salvar Foto</button>
@@ -111,11 +115,37 @@
         const btnCapture = document.getElementById('btn-capture');
         const btnRetake = document.getElementById('btn-retake');
         
+        // Elementos adicionados para Upload customizado
+        const btnSelectUpload = document.getElementById('btn-select-upload');
+        const uploadFileList = document.getElementById('upload-file-list');
+        
         let stream = null;
         let capturedFiles = [];
 
         const instDiv = document.getElementById('pose-instruction');
         const counterDiv = document.getElementById('capture-counter');
+
+        // Clique no botão de upload customizado que aciona o input real
+        if (btnSelectUpload) {
+            btnSelectUpload.addEventListener('click', function() {
+                fileInput.click();
+            });
+        }
+
+        // Listener para exibir feedback dos arquivos selecionados e alimentar a lista
+        fileInput.addEventListener('change', function() {
+            if (fileInput.files.length > 0) {
+                let fileNames = [];
+                for (let i = 0; i < fileInput.files.length; i++) {
+                    fileNames.push(fileInput.files[i].name);
+                }
+                uploadFileList.innerText = `Selecionados (${fileInput.files.length}): ${fileNames.join(', ')}`;
+                capturedFiles = Array.from(fileInput.files);
+            } else {
+                uploadFileList.innerText = "Nenhum arquivo selecionado.";
+                capturedFiles = [];
+            }
+        });
         
         function atualizarInstrucoes() {
             const count = capturedFiles.length;
@@ -247,71 +277,56 @@
 
         // --- SISTEMA MANUAL DE TROCA DE ABAS ---
         uploadTab.addEventListener('click', function() {
-            // Troca o visual dos botões
             uploadTab.classList.add('active');
             cameraTab.classList.remove('active');
             
-            // Troca as telas (Panes)
             uploadPane.classList.add('show', 'active');
             cameraPane.classList.remove('show', 'active');
 
-            // Limpa a lógica da câmera
             stopCamera();
             preview.style.display = "none";
             btnRetake.style.display = "none";
             fileInput.value = ""; 
+            capturedFiles = [];
+            atualizarInstrucoes();
+            if (uploadFileList) uploadFileList.innerText = "Nenhum arquivo selecionado.";
         });
 
         cameraTab.addEventListener('click', function() {
-            // Troca o visual dos botões
             cameraTab.classList.add('active');
             uploadTab.classList.remove('active');
             
-            // Troca as telas (Panes)
             cameraPane.classList.add('show', 'active');
             uploadPane.classList.remove('show', 'active');
 
-            // Prepara a tela de câmera
             fileInput.value = ""; 
+            capturedFiles = [];
+            atualizarInstrucoes();
             btnStart.style.display = "block";
+            if (uploadFileList) uploadFileList.innerText = "Nenhum arquivo selecionado.";
         });
 
         // Proteção: não envia o formulário se o input estiver vazio
         form.addEventListener('submit', function(e) {
+            if (cameraPane.classList.contains('active') && capturedFiles.length < 3) {
+                e.preventDefault();
+                alert(`Capture as 3 fotos primeiro (${capturedFiles.length}/3).`);
+                return;
+            }
 
-    if (
-        cameraPane.classList.contains('active') &&
-        capturedFiles.length < 3
-    ) {
+            if (uploadPane.classList.contains('active') && fileInput.files.length === 0) {
+                e.preventDefault();
+                alert("Selecione uma foto.");
+                return;
+            }
 
-        e.preventDefault();
-
-        alert(
-            `Capture as 3 fotos primeiro (${capturedFiles.length}/3).`
-        );
-
-        return;
-    }
-
-    if (
-        uploadPane.classList.contains('active') &&
-        fileInput.files.length === 0
-    ) {
-
-        e.preventDefault();
-
-        alert(
-            "Selecione uma foto."
-        );
-
-        return;
-    }
-
-    btnSubmit.innerHTML =
-        '<span class="spinner-border spinner-border-sm me-2"></span>Processando...';
-
-    btnSubmit.disabled = true;
-});
+            btnSubmit.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Processando...';
+            
+            // Pequeno atraso na desativação do botão para permitir o processamento dos arquivos antes do envio do payload
+            setTimeout(() => {
+                btnSubmit.disabled = true;
+            }, 10);
+        });
     });
 </script>
 

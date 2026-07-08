@@ -127,9 +127,13 @@ def register_student(request):
 
                 embeddings_coletados = []
                 pesos_coletados = []
-                ultima_foto_salva = None
+                caminhos_salvos = []
 
-                for photo in files:
+                # Prepara o diretório exclusivo do aluno
+                diretorio_aluno = os.path.join(settings.MEDIA_ROOT, 'faces', matricula)
+                os.makedirs(diretorio_aluno, exist_ok=True)
+
+                for idx, photo in enumerate(files):
                     img = Image.open(photo)
                     img = ImageOps.exif_transpose(img).convert('RGB')
                     img_array = np.array(img)
@@ -147,13 +151,28 @@ def register_student(request):
                         
                         embeddings_coletados.append(emb_norm)
                         pesos_coletados.append(max(float(getattr(face, "det_score", 1.0)), 1e-6))
-                        ultima_foto_salva = photo
+                        
+                        # Define extensão e nome do arquivo (ex: foto_0.jpg)
+                        ext = photo.name.split('.')[-1]
+                        if ext.lower() not in ['jpg', 'jpeg', 'png']:
+                            ext = 'jpg'
+                        
+                        nome_arquivo = f"foto_{idx}.{ext}"
+                        caminho_salvamento = os.path.join(diretorio_aluno, nome_arquivo)
+                        
+                        # Grava a foto fisicamente no disco
+                        img.save(caminho_salvamento, format="JPEG" if ext.lower() in ['jpg', 'jpeg'] else ext.upper())
+                        
+                        # Armazena o caminho relativo para associar no ImageField do Django
+                        caminho_relativo = os.path.join('faces', matricula, nome_arquivo)
+                        caminhos_salvos.append(caminho_relativo)
 
-                if embeddings_coletados:
+                if embeddings_coletados and caminhos_salvos:
                     # Salva a lista de todos os embeddings coletados para comparação Multi-Template
                     embeddings_salvar = [emb.tolist() for emb in embeddings_coletados]
                     
-                    student.profile_photo = ultima_foto_salva
+                    # Define a foto_0 (frontal) como o avatar/profile_photo
+                    student.profile_photo = caminhos_salvos[0]
                     student.face_encoding = embeddings_salvar
                     student.save()
 
@@ -219,9 +238,23 @@ def update_student_photo(request, student_id):
             matricula = student.user.username
             embeddings_coletados = []
             pesos_coletados = []
-            ultima_foto_salva = None
+            caminhos_salvos = []
+
+            # Prepara o diretório exclusivo do aluno
+            diretorio_aluno = os.path.join(settings.MEDIA_ROOT, 'faces', matricula)
             
-            for photo in files:
+            # Limpeza de fotos antigas na pasta do aluno
+            if os.path.exists(diretorio_aluno):
+                try:
+                    for arquivo in os.listdir(diretorio_aluno):
+                        if arquivo.lower().endswith(('.png', '.jpg', '.jpeg')):
+                            os.remove(os.path.join(diretorio_aluno, arquivo))
+                except Exception as e:
+                    print(f"Erro ao limpar arquivos antigos na pasta do aluno: {e}")
+            else:
+                os.makedirs(diretorio_aluno, exist_ok=True)
+            
+            for idx, photo in enumerate(files):
                 img = Image.open(photo)
                 img = ImageOps.exif_transpose(img).convert('RGB')
                 img_array = np.array(img)
@@ -239,25 +272,34 @@ def update_student_photo(request, student_id):
                     
                     embeddings_coletados.append(emb_norm)
                     pesos_coletados.append(max(float(getattr(face, "det_score", 1.0)), 1e-6))
-                    ultima_foto_salva = photo # Segura a referência para atualizar o avatar
+                    
+                    # Define extensão e nome do arquivo (ex: foto_0.jpg)
+                    ext = photo.name.split('.')[-1]
+                    if ext.lower() not in ['jpg', 'jpeg', 'png']:
+                        ext = 'jpg'
+                    
+                    nome_arquivo = f"foto_{idx}.{ext}"
+                    caminho_salvamento = os.path.join(diretorio_aluno, nome_arquivo)
+                    
+                    # Grava a foto fisicamente no disco
+                    img.save(caminho_salvamento, format="JPEG" if ext.lower() in ['jpg', 'jpeg'] else ext.upper())
+                    
+                    caminho_relativo = os.path.join('faces', matricula, nome_arquivo)
+                    caminhos_salvos.append(caminho_relativo)
             
-            if embeddings_coletados:
+            if embeddings_coletados and caminhos_salvos:
                 # Salva a lista de todos os embeddings coletados para comparação Multi-Template
                 embeddings_salvar = [emb.tolist() for emb in embeddings_coletados]
                 
-                # Limpeza de fotos antigas no disco
-                if student.profile_photo:
-                    try:
-                        diretorio = os.path.dirname(student.profile_photo.path)
-                        if os.path.exists(diretorio):
-                            for arquivo in os.listdir(diretorio):
-                                nome_arquivo, _ = os.path.splitext(arquivo)
-                                if nome_arquivo == matricula:
-                                    os.remove(os.path.join(diretorio, arquivo))
-                    except Exception as e:
-                        print(f"Erro ao limpar arquivos antigos no disco: {e}")
+                # Remove também qualquer arquivo de imagem avulso na raiz de faces/ que represente a matrícula
+                for ext_antiga in ['jpg', 'jpeg', 'png']:
+                    caminho_raiz_antigo = os.path.join(settings.MEDIA_ROOT, 'faces', f"{matricula}.{ext_antiga}")
+                    if os.path.exists(caminho_raiz_antigo):
+                        try: os.remove(caminho_raiz_antigo)
+                        except Exception: pass
                 
-                student.profile_photo = ultima_foto_salva
+                # Define a foto_0 (frontal) como o avatar/profile_photo
+                student.profile_photo = caminhos_salvos[0]
                 student.face_encoding = embeddings_salvar
                 student.save() 
                 

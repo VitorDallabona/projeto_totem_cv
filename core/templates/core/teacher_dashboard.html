@@ -345,6 +345,7 @@
     let peerConnection = null;
     let dataChannel = null;
     let animationId = null;
+    let fallbackIntervalId = null; // Variável para controlar o intervalo do Fallback HTTP
     
     // Variáveis da Interpolação (LERP)
     let activeFaces = {}; 
@@ -388,6 +389,102 @@
         return lines.join('\r\n');
     }
 
+    // Função de Fallback que envia frames via HTTP POST caso o WebRTC falhe/caia
+    function iniciarFallbackHTTP(video, classId, feedback, statusBadge, cameraMode) {
+        if (fallbackIntervalId) {
+            clearInterval(fallbackIntervalId);
+        }
+
+        statusBadge.innerText = "Fallback HTTP 📡";
+        statusBadge.className = "position-absolute bottom-0 start-0 m-2 badge bg-info text-white shadow-sm";
+
+        // Canvas temporário oculto para extração de frames
+        const tempCanvas = document.createElement('canvas');
+        const tempCtx = tempCanvas.getContext('2d');
+
+        fallbackIntervalId = setInterval(async () => {
+            if (!videoStream || video.paused || video.ended) return;
+
+            // Resolução reduzida para economia de tráfego/processamento
+            tempCanvas.width = 480;
+            tempCanvas.height = 360;
+
+            tempCtx.drawImage(video, 0, 0, tempCanvas.width, tempCanvas.height);
+            const base64Image = tempCanvas.toDataURL('image/jpeg', 0.7);
+
+            try {
+                const response = await fetch('/students/processar-frame/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: new URLSearchParams({
+                        'image': base64Image,
+                        'class_id': classId,
+                        'camera_mode': cameraMode
+                    })
+                });
+
+                if (!response.ok) throw new Error("Erro na requisição do Fallback HTTP");
+
+                const data = await response.json();
+                const agora = Date.now();
+
+                if (data.status === "sucesso") {
+                    lastImageW = data.image_w || lastImageW;
+                    lastImageH = data.image_h || lastImageH;
+
+                    if (Array.isArray(data.faces)) {
+                        const idsNesteFrame = new Set();
+
+                        data.faces.forEach(f => {
+                            if (!f.box) return;
+                            
+                            const id = f.name ? f.name.split(" (")[0].trim() : 'Desconhecido';
+                            idsNesteFrame.add(id);
+
+                            if (!activeFaces[id]) {
+                                activeFaces[id] = {
+                                    currentBox: { ...f.box },
+                                    targetBox: { ...f.box },
+                                    color: f.color,
+                                    status: f.status,
+                                    name: f.name,
+                                    lastUpdate: agora
+                                };
+                            } else {
+                                activeFaces[id].targetBox = { ...f.box };
+                                activeFaces[id].color = f.color;
+                                activeFaces[id].status = f.status;
+                                activeFaces[id].name = f.name;
+                                activeFaces[id].lastUpdate = agora;
+                            }
+                        });
+
+                        // Limpeza de fantasmas
+                        for (const oldId in activeFaces) {
+                            if (!idsNesteFrame.has(oldId)) {
+                                delete activeFaces[oldId];
+                            }
+                        }
+                    }
+
+                    if (data.reconhecidos && data.reconhecidos.length > 0) {
+                        feedback.style.display = 'block';
+                        feedback.innerText = `✔️ ${data.reconhecidos[0]}`;
+                        setTimeout(() => feedback.style.display = 'none', 1500);
+                    }
+
+                    if (data.atualizar_tela) {
+                        atualizarDashboardSilenciosamente();
+                    }
+                }
+            } catch (err) {
+                console.error("Erro no processamento do Fallback HTTP:", err);
+            }
+        }, 400);
+    }
+
     async function toggleCamera() {
         const container = document.getElementById('camera-container');
         const toggle = document.getElementById('camSwitch');
@@ -397,10 +494,14 @@
         const classId = classSelect ? classSelect.value : null;
 
         // Limpeza Total ao desligar
-        peerConnection = new RTCPeerConnection({
-            iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
-            bundlePolicy: 'max-bundle'
-        });
+        if (peerConnection) {
+            try { peerConnection.close(); } catch(e) {}
+            peerConnection = null;
+        }
+        if (fallbackIntervalId) {
+            clearInterval(fallbackIntervalId);
+            fallbackIntervalId = null;
+        }
         if (videoStream) {
             videoStream.getTracks().forEach(track => track.stop());
             videoStream = null;
@@ -481,6 +582,15 @@
                     ]
                 };
                 peerConnection = new RTCPeerConnection(webrtcConfig);
+
+                // Monitoramento de conexão para ativar fallback caso caia ou falhe no meio do uso
+                peerConnection.onconnectionstatechange = () => {
+                    console.log("WebRTC Connection State:", peerConnection.connectionState);
+                    if (peerConnection.connectionState === "failed" || peerConnection.connectionState === "disconnected") {
+                        console.warn("⚠️ WebRTC desconectado/falhou. Iniciando Fallback via HTTP...");
+                        iniciarFallbackHTTP(video, classId, feedback, statusBadge, modeSelect.value);
+                    }
+                };
 
                 // 3. Cria o "Data Channel" (O tubo de dados para receber os JSONs da IA)
                 // Otimizado para latência: sem ordem (unordered) e sem retransmissões (unreliable)
@@ -599,11 +709,16 @@
                 await peerConnection.setRemoteDescription(answer);
 
             } catch (err) {
-                console.error("Erro WebRTC:", err);
-                alert("Erro ao estabelecer conexão WebRTC.");
-                toggle.checked = false;
-                container.innerHTML = `<span class="text-muted small fw-medium text-uppercase tracking-wider">Câmera Desativada</span>`;
-                container.classList.replace('bg-dark', 'bg-light');
+                console.warn("⚠️ Falha ao estabelecer conexão WebRTC, iniciando Fallback via HTTP...", err);
+                
+                // Limpa o peerConnection se foi criado
+                if (peerConnection) {
+                    try { peerConnection.close(); } catch(e) {}
+                    peerConnection = null;
+                }
+                
+                // Inicia o modo de Fallback por requisições HTTP POST
+                iniciarFallbackHTTP(video, classId, feedback, statusBadge, modeSelect.value);
             }
         } else {
             container.innerHTML = `<span class="text-muted small fw-medium text-uppercase tracking-wider">Câmera Desativada</span>`;

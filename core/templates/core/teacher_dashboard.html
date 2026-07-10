@@ -345,6 +345,7 @@
     let peerConnection = null;
     let dataChannel = null;
     let animationId = null;
+    let fallbackIntervalId = null; // Variável para controlar o intervalo do Fallback HTTP
     
     // Variáveis da Interpolação (LERP)
     let activeFaces = {}; 
@@ -353,6 +354,135 @@
 
     function lerp(start, end, amt) {
         return (1 - amt) * start + amt * end;
+    }
+
+    // Auxiliar para reordenar os codecs no SDP e priorizar H.264 (aceleração por hardware)
+    function preferH264(sdp) {
+        let lines = sdp.split('\r\n');
+        let mLineIdx = -1;
+        for (let i = 0; i < lines.length; i++) {
+            if (lines[i].indexOf('m=video') === 0) {
+                mLineIdx = i;
+                break;
+            }
+        }
+        if (mLineIdx === -1) return sdp;
+
+        let mLineElements = lines[mLineIdx].split(' ');
+        let rtpmapH264 = [];
+        
+        for (let i = 0; i < lines.length; i++) {
+            if (lines[i].indexOf('a=rtpmap:') === 0 && lines[i].toLowerCase().indexOf('h264') !== -1) {
+                let payload = lines[i].split(':')[1].split(' ')[0];
+                rtpmapH264.push(payload);
+            }
+        }
+
+        if (rtpmapH264.length === 0) return sdp;
+
+        let header = mLineElements.slice(0, 3);
+        let rest = mLineElements.slice(3);
+        
+        let newRest = rtpmapH264.concat(rest.filter(p => !rtpmapH264.includes(p)));
+        lines[mLineIdx] = header.concat(newRest).join(' ');
+
+        return lines.join('\r\n');
+    }
+
+    // Função de Fallback que envia frames via HTTP POST caso o WebRTC falhe/caia
+    function iniciarFallbackHTTP(video, classId, feedback, statusBadge, cameraMode) {
+        if (fallbackIntervalId) {
+            clearInterval(fallbackIntervalId);
+        }
+
+        statusBadge.innerText = "Fallback HTTP 📡";
+        statusBadge.className = "position-absolute bottom-0 start-0 m-2 badge bg-info text-white shadow-sm";
+
+        // Canvas temporário oculto para extração de frames
+        const tempCanvas = document.createElement('canvas');
+        const tempCtx = tempCanvas.getContext('2d');
+
+        fallbackIntervalId = setInterval(async () => {
+            if (!videoStream || video.paused || video.ended) return;
+
+            // Resolução reduzida para economia de tráfego/processamento
+            tempCanvas.width = 480;
+            tempCanvas.height = 360;
+
+            tempCtx.drawImage(video, 0, 0, tempCanvas.width, tempCanvas.height);
+            const base64Image = tempCanvas.toDataURL('image/jpeg', 0.7);
+
+            try {
+                const response = await fetch('/students/processar-frame/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: new URLSearchParams({
+                        'image': base64Image,
+                        'class_id': classId,
+                        'camera_mode': cameraMode
+                    })
+                });
+
+                if (!response.ok) throw new Error("Erro na requisição do Fallback HTTP");
+
+                const data = await response.json();
+                const agora = Date.now();
+
+                if (data.status === "sucesso") {
+                    lastImageW = data.image_w || lastImageW;
+                    lastImageH = data.image_h || lastImageH;
+
+                    if (Array.isArray(data.faces)) {
+                        const idsNesteFrame = new Set();
+
+                        data.faces.forEach(f => {
+                            if (!f.box) return;
+                            
+                            const id = f.name ? f.name.split(" (")[0].trim() : 'Desconhecido';
+                            idsNesteFrame.add(id);
+
+                            if (!activeFaces[id]) {
+                                activeFaces[id] = {
+                                    currentBox: { ...f.box },
+                                    targetBox: { ...f.box },
+                                    color: f.color,
+                                    status: f.status,
+                                    name: f.name,
+                                    lastUpdate: agora
+                                };
+                            } else {
+                                activeFaces[id].targetBox = { ...f.box };
+                                activeFaces[id].color = f.color;
+                                activeFaces[id].status = f.status;
+                                activeFaces[id].name = f.name;
+                                activeFaces[id].lastUpdate = agora;
+                            }
+                        });
+
+                        // Limpeza de fantasmas
+                        for (const oldId in activeFaces) {
+                            if (!idsNesteFrame.has(oldId)) {
+                                delete activeFaces[oldId];
+                            }
+                        }
+                    }
+
+                    if (data.reconhecidos && data.reconhecidos.length > 0) {
+                        feedback.style.display = 'block';
+                        feedback.innerText = `✔️ ${data.reconhecidos[0]}`;
+                        setTimeout(() => feedback.style.display = 'none', 1500);
+                    }
+
+                    if (data.atualizar_tela) {
+                        atualizarDashboardSilenciosamente();
+                    }
+                }
+            } catch (err) {
+                console.error("Erro no processamento do Fallback HTTP:", err);
+            }
+        }, 400);
     }
 
     async function toggleCamera() {
@@ -365,8 +495,12 @@
 
         // Limpeza Total ao desligar
         if (peerConnection) {
-            peerConnection.close();
+            try { peerConnection.close(); } catch(e) {}
             peerConnection = null;
+        }
+        if (fallbackIntervalId) {
+            clearInterval(fallbackIntervalId);
+            fallbackIntervalId = null;
         }
         if (videoStream) {
             videoStream.getTracks().forEach(track => track.stop());
@@ -415,18 +549,20 @@
                 let constraints = { video: {} };
                 
                 if (modeSelect.value === 'totem') {
-                    // MODO TOTEM: Webcam tradicional (Paisagem) - 720p (com mínimo de 480p)
+                    // MODO TOTEM: Webcam tradicional (Paisagem) - Proporção nativa 16:9 sem zoom/recorte
                     constraints.video = {
                         facingMode: "user",
                         width: { ideal: 1280, min: 640 },
-                        height: { ideal: 720, min: 480 }
+                        height: { ideal: 720, min: 480 },
+                        frameRate: { ideal: 24, max: 30 }
                     };
                 } else {
-                    // MODO VARREDURA: Celular em pé (Retrato) - 720p (com mínimo de 480p)
+                    // MODO VARREDURA: Celular em pé (Retrato) - Proporção nativa 9:16 sem zoom/recorte
                     constraints.video = {
                         facingMode: "environment",
                         width: { ideal: 720, min: 480 },
-                        height: { ideal: 1280, min: 640 }
+                        height: { ideal: 1280, min: 640 },
+                        frameRate: { ideal: 24, max: 30 }
                     };
                 }
                 
@@ -437,13 +573,38 @@
                 animationId = requestAnimationFrame(renderLoop);
 
                 // --- 2. INICIA A CONEXÃO WEBRTC ---
-                peerConnection = new RTCPeerConnection();
+                // Configuração com servidores STUN públicos da Google para melhor conectividade externa e transposição de NAT (NAT Traversal)
+                const webrtcConfig = {
+                    iceServers: [
+                        { urls: 'stun:stun.l.google.com:19302' },
+                        { urls: 'stun:stun1.l.google.com:19302' },
+                        { urls: 'stun:stun2.l.google.com:19302' }
+                    ]
+                };
+                peerConnection = new RTCPeerConnection(webrtcConfig);
+
+                // Monitoramento de conexão para ativar fallback caso caia ou falhe no meio do uso
+                peerConnection.onconnectionstatechange = () => {
+                    console.log("WebRTC Connection State:", peerConnection.connectionState);
+                    if (peerConnection.connectionState === "failed" || peerConnection.connectionState === "disconnected") {
+                        console.warn("⚠️ WebRTC desconectado/falhou. Iniciando Fallback via HTTP...");
+                        iniciarFallbackHTTP(video, classId, feedback, statusBadge, modeSelect.value);
+                    }
+                };
 
                 // 3. Cria o "Data Channel" (O tubo de dados para receber os JSONs da IA)
-                dataChannel = peerConnection.createDataChannel('chat');
+                // Otimizado para latência: sem ordem (unordered) e sem retransmissões (unreliable)
+                dataChannel = peerConnection.createDataChannel('chat', {
+                    ordered: false,
+                    maxRetransmits: 0
+                });
                 
                 dataChannel.onmessage = (event) => {
                     const data = JSON.parse(event.data);
+                    const agora = Date.now();
+                    
+                    // DESCARTAR PACOTE SE FOR MAIS ANTIGO QUE 500ms (Reduz o lag acumulado)
+                    if (agora - data.timestamp > 500) return;
                     
                     if (data.status === "sucesso") {
                         statusBadge.innerText = "WebRTC Online ⚡";
@@ -502,13 +663,33 @@
                     }
                 };
 
-                // 4. Adiciona a trilha de vídeo nativa ao tubo do WebRTC
-                videoStream.getTracks().forEach(track => {
+               const tracks = videoStream.getTracks();
+                const scaleFactor = modeSelect.value === 'totem' ? 1.5 : 2.0; // Totem = downscale de 1.5 (~320p), Celular = downscale de 2.0 (~240p)
+                for (const track of tracks) {
                     peerConnection.addTrack(track, videoStream);
-                });
-
+                    
+                    if (track.kind === 'video') {
+                        // Aguarda um momento para que o sender seja criado e o track esteja ativo
+                        await new Promise(r => setTimeout(r, 500));
+                        
+                        const sender = peerConnection.getSenders().find(s => s.track && s.track.kind === 'video');
+                        if (sender) {
+                            try {
+                                const params = sender.getParameters();
+                                if (!params.encodings) params.encodings = [{}];
+                                params.encodings[0].maxFramerate = 24; // 24 FPS é fluido e consome menos processamento
+                                params.encodings[0].scaleResolutionDownBy = scaleFactor; // Reduz a resolução enviada pela metade ou mais
+                                await sender.setParameters(params);
+                                console.log(`✅ WebRTC: FPS=24, scaleResolutionDownBy=${scaleFactor} aplicado`);
+                            } catch (e) {
+                                console.warn("⚠️ Não foi possível forçar os parâmetros de codificação:", e);
+                            }
+                        }
+                    }
+                }
                 // 5. O Aperto de Mãos (SDP Offer)
                 const offer = await peerConnection.createOffer();
+                offer.sdp = preferH264(offer.sdp); // Força codec H.264
                 await peerConnection.setLocalDescription(offer);
 
                 // Envia a oferta para a nova rota Python que criamos
@@ -518,7 +699,8 @@
                     body: JSON.stringify({
                         sdp: peerConnection.localDescription.sdp,
                         type: peerConnection.localDescription.type,
-                        class_id: classId
+                        class_id: classId,
+                        camera_mode: modeSelect.value
                     })
                 });
 
@@ -527,11 +709,16 @@
                 await peerConnection.setRemoteDescription(answer);
 
             } catch (err) {
-                console.error("Erro WebRTC:", err);
-                alert("Erro ao estabelecer conexão WebRTC.");
-                toggle.checked = false;
-                container.innerHTML = `<span class="text-muted small fw-medium text-uppercase tracking-wider">Câmera Desativada</span>`;
-                container.classList.replace('bg-dark', 'bg-light');
+                console.warn("⚠️ Falha ao estabelecer conexão WebRTC, iniciando Fallback via HTTP...", err);
+                
+                // Limpa o peerConnection se foi criado
+                if (peerConnection) {
+                    try { peerConnection.close(); } catch(e) {}
+                    peerConnection = null;
+                }
+                
+                // Inicia o modo de Fallback por requisições HTTP POST
+                iniciarFallbackHTTP(video, classId, feedback, statusBadge, modeSelect.value);
             }
         } else {
             container.innerHTML = `<span class="text-muted small fw-medium text-uppercase tracking-wider">Câmera Desativada</span>`;
@@ -541,90 +728,73 @@
 
     // --- MOTOR DE ANIMAÇÃO A 60 FPS ---
     function renderLoop() {
-        animationId = requestAnimationFrame(renderLoop);
+    animationId = requestAnimationFrame(renderLoop);
 
-        const overlay = document.getElementById('cam-overlay');
-        if (!overlay) return;
-        const ctx = overlay.getContext('2d');
+    const overlay = document.getElementById('cam-overlay');
+    if (!overlay) return;
+    const ctx = overlay.getContext('2d');
+    ctx.clearRect(0, 0, overlay.width, overlay.height);
 
-        ctx.clearRect(0, 0, overlay.width, overlay.height);
-
-        ctx.beginPath();
-        ctx.moveTo(overlay.width / 2, 0);
-        ctx.lineTo(overlay.width / 2, overlay.height);
-        ctx.strokeStyle = 'rgba(255, 0, 0, 0.7)';
-        ctx.lineWidth = 2;
-        ctx.stroke();
-
-        const videoRatio = lastImageW / lastImageH;
-        const overlayRatio = overlay.width / overlay.height;
-        
-        let drawWidth = overlay.width;
-        let drawHeight = overlay.height;
-        let offsetX = 0; let offsetY = 0;
-
-        if (videoRatio > overlayRatio) {
-            drawHeight = overlay.height;
-            drawWidth = overlay.height * videoRatio;
-            offsetX = (overlay.width - drawWidth) / 2;
-        } else {
-            drawWidth = overlay.width;
-            drawHeight = overlay.width / videoRatio;
-            offsetY = (overlay.height - drawHeight) / 2;
-        }
-
-        const scaleX = drawWidth / lastImageW;
-        const scaleY = drawHeight / lastImageH;
-
-        const agora = Date.now();
-        const lerpSpeed = 0.35; 
-
-        for (const id in activeFaces) {
-            const f = activeFaces[id];
-
-            if (agora - f.lastUpdate > 800) {
-                delete activeFaces[id];
-                continue;
-            }
-
-            f.currentBox.left = lerp(f.currentBox.left, f.targetBox.left, lerpSpeed);
-            f.currentBox.top = lerp(f.currentBox.top, f.targetBox.top, lerpSpeed);
-            f.currentBox.right = lerp(f.currentBox.right, f.targetBox.right, lerpSpeed);
-            f.currentBox.bottom = lerp(f.currentBox.bottom, f.targetBox.bottom, lerpSpeed);
-
-            const left = (f.currentBox.left * scaleX) + offsetX;
-            const top = (f.currentBox.top * scaleY) + offsetY;
-            const right = (f.currentBox.right * scaleX) + offsetX;
-            const bottom = (f.currentBox.bottom * scaleY) + offsetY;
-            const w = right - left;
-            const h = bottom - top;
-
-            const color = f.color || '#00FF00';
-            ctx.strokeStyle = color;
-            ctx.lineWidth = Math.max(2, Math.round(Math.min(overlay.width, overlay.height) * 0.003));
-            ctx.strokeRect(left, top, w, h);
-
-            const label = `${f.name || 'Desconhecido'} | ${f.status || ''}`;
-            ctx.font = `${Math.max(12, Math.round(overlay.height * 0.04))}px sans-serif`;
-            const textW = ctx.measureText(label).width;
-            const pad = 6;
-            const labelX = left;
-            const labelY = Math.max(0, top - Math.round(overlay.height * 0.05));
-
-            // Fundo escuro semi-transparente para leitura perfeita
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-            ctx.fillRect(labelX, labelY, textW + pad * 3, Math.round(overlay.height * 0.06));
-            
-            // Filete lateral com a cor real da caixa (Verde ou Vermelho)
-            ctx.fillStyle = color;
-            ctx.fillRect(labelX, labelY, 4, Math.round(overlay.height * 0.06));
-            
-            // Texto sempre branco e bem contrastado
-            ctx.fillStyle = '#fff';
-            // O '+ 4' empurra o texto um pouquinho pra direita para não encostar no filete
-            ctx.fillText(label, labelX + pad + 4, labelY + Math.round(overlay.height * 0.045));
-        }
+    const videoRatio = lastImageW / lastImageH;
+    const overlayRatio = overlay.width / overlay.height;
+    
+    // Calcula a escala correta para o vídeo preencher o container (object-fit: cover)
+    let drawWidth, drawHeight, offsetX, offsetY;
+    if (videoRatio > overlayRatio) {
+        // O vídeo é mais largo do que a proporção do container.
+        // O vídeo preenche a altura inteira do container e transborda/corta nas laterais.
+        drawHeight = overlay.height;
+        drawWidth = overlay.height * videoRatio;
+        offsetX = (overlay.width - drawWidth) / 2;
+        offsetY = 0;
+    } else {
+        // O vídeo é mais alto do que a proporção do container.
+        // O vídeo preenche a largura inteira do container e transborda/corta no topo e base.
+        drawWidth = overlay.width;
+        drawHeight = overlay.width / videoRatio;
+        offsetX = 0;
+        offsetY = (overlay.height - drawHeight) / 2;
     }
+
+    const scaleX = drawWidth / lastImageW;
+    const scaleY = drawHeight / lastImageH;
+
+    const agora = Date.now();
+    const lerpSpeed = 0.2; // <--- AJUSTE AQUI: 0.1 (lento) até 0.5 (rápido)
+
+    for (const id in activeFaces) {
+        const f = activeFaces[id];
+
+        // Se o rosto sumiu há mais de 500ms, removemos
+        if (agora - f.lastUpdate > 800) {
+            delete activeFaces[id];
+            continue;
+        }
+
+        // --- A MÁGICA DA INTERPOLAÇÃO ---
+        f.currentBox.left = lerp(f.currentBox.left, f.targetBox.left, lerpSpeed);
+        f.currentBox.top = lerp(f.currentBox.top, f.targetBox.top, lerpSpeed);
+        f.currentBox.right = lerp(f.currentBox.right, f.targetBox.right, lerpSpeed);
+        f.currentBox.bottom = lerp(f.currentBox.bottom, f.targetBox.bottom, lerpSpeed);
+
+        const left = (f.currentBox.left * scaleX) + offsetX;
+        const top = (f.currentBox.top * scaleY) + offsetY;
+        const w = (f.currentBox.right - f.currentBox.left) * scaleX;
+        const h = (f.currentBox.bottom - f.currentBox.top) * scaleY;
+
+        // Desenho da caixa
+        ctx.strokeStyle = f.color || '#00FF00';
+        ctx.lineWidth = 3;
+        ctx.strokeRect(left, top, w, h);
+
+        // Desenho da label
+        ctx.fillStyle = 'rgba(0,0,0,0.6)';
+        ctx.fillRect(left, top - 25, w, 25);
+        ctx.fillStyle = '#fff';
+        ctx.font = '14px sans-serif';
+        ctx.fillText(f.name, left + 5, top - 8);
+    }
+}
 
     function atualizarDashboardSilenciosamente() {
         fetch(window.location.href)

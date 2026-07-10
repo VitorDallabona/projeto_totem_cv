@@ -4,6 +4,10 @@ from .models import Student
 from .models import Classroom
 
 
+class MultipleFileInput(forms.ClearableFileInput):
+    allow_multiple_selected = True
+
+
 class StudentRegistrationForm(forms.ModelForm):
     first_name = forms.CharField(max_length=30)
     last_name = forms.CharField(max_length=30)
@@ -12,23 +16,24 @@ class StudentRegistrationForm(forms.ModelForm):
     
     class Meta:
         model = Student
-        fields = ['registration_id', 'profile_photo']
+        fields = ['registration_id']
         
         error_messages = {
             'registration_id': {
                 'unique': 'Esta matrícula já está cadastrada no sistema. Faça login para acessar seu painel.',
             }
         }
+
         
+    def clean_registration_id(self):
+        matricula = self.cleaned_data.get('registration_id')
         
-        def clean_registration_id(self):
-            matricula = self.cleaned_data.get('registration_id')
+        # Verifica na tabela de Login (User) se a matrícula já existe
+        if User.objects.filter(username=matricula).exists():
+            raise forms.ValidationError("Esta matrícula já está cadastrada no sistema. Faça login para acessar seu painel.")
             
-            # Verifica na tabela de Login (User) se a matrícula já existe
-            if User.objects.filter(username=matricula).exists():
-                raise forms.ValidationError("Esta matrícula já está cadastrada no sistema. Faça login para acessar seu painel.")
-                
-            return matricula
+        return matricula
+
         
         
         
